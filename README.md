@@ -115,6 +115,8 @@ watch/                   drop source files here (gitignored)
 done/                    HLS output (gitignored)
 Dockerfile               multi-stage build (watchdog + transcoder)
 docker-compose.yml       shared watch/done volumes
+web/                     UI (not created yet)
+
 ```
 
 ## Prerequisites
