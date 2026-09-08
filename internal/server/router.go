@@ -1,9 +1,7 @@
 package server
 
 import (
-	"database/sql"
 	"log/slog"
-	"net/http"
 
 	"github.com/crimsonn/media_pipeline/internal/api/transcoder"
 	"github.com/crimsonn/media_pipeline/internal/config"
@@ -19,7 +17,6 @@ func SetupRouter(
 	config *config.Config,
 	transcoderService pb.TranscoderServiceClient,
 	healthService healthpb.HealthClient,
-	db *sql.DB,
 	transcoderHandler *transcoder.Handler,
 ) *gin.Engine {
 	router := gin.New()
@@ -37,19 +34,13 @@ func SetupRouter(
 
 	v1 := router.Group("/api/v1")
 	{
-		v1.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"message": "OK"})
-		})
-		v1.GET("/transcoder/health", func(c *gin.Context) {
-			response, err := healthService.Check(c.Request.Context(), &healthpb.HealthCheckRequest{
-				Service: "",
-			})
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, response)
-		})
+		transcoderGroup := v1.Group("/transcoder")
+		transcoderGroup.GET("/renditions", transcoderHandler.GetRenditions)
+		transcoderGroup.POST("/renditions", transcoderHandler.CreateRendition)
+		transcoderGroup.DELETE("/renditions/:id", transcoderHandler.DeleteRendition)
+		transcoderGroup.POST("/profiles", transcoderHandler.CreateProfile)
+		transcoderGroup.GET("/profiles/:id", transcoderHandler.GetProfile)
+		transcoderGroup.GET("/profiles", transcoderHandler.GetProfiles)
 	}
 
 	return router

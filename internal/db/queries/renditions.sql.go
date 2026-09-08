@@ -7,11 +7,10 @@ package queries
 
 import (
 	"context"
-	"database/sql"
 )
 
 const createRendition = `-- name: CreateRendition :one
-INSERT INTO renditions(
+INSERT INTO renditions (
   name,
   width,
   height,
@@ -19,27 +18,25 @@ INSERT INTO renditions(
   audio_bitrate,
   video_codec,
   audio_codec,
-  fps,
-  created_at
+  fps
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at
 `
 
 type CreateRenditionParams struct {
 	Name         string
-	Width        int64
-	Height       int64
-	VideoBitrate int64
-	AudioBitrate int64
-	VideoCodec   sql.NullString
-	AudioCodec   sql.NullString
-	Fps          sql.NullInt64
-	CreatedAt    interface{}
+	Width        int32
+	Height       int32
+	VideoBitrate int32
+	AudioBitrate int32
+	VideoCodec   string
+	AudioCodec   string
+	Fps          int32
 }
 
 func (q *Queries) CreateRendition(ctx context.Context, arg CreateRenditionParams) (Rendition, error) {
-	row := q.db.QueryRowContext(ctx, createRendition,
+	row := q.db.QueryRow(ctx, createRendition,
 		arg.Name,
 		arg.Width,
 		arg.Height,
@@ -48,7 +45,6 @@ func (q *Queries) CreateRendition(ctx context.Context, arg CreateRenditionParams
 		arg.VideoCodec,
 		arg.AudioCodec,
 		arg.Fps,
-		arg.CreatedAt,
 	)
 	var i Rendition
 	err := row.Scan(
@@ -67,20 +63,64 @@ func (q *Queries) CreateRendition(ctx context.Context, arg CreateRenditionParams
 }
 
 const deleteRendition = `-- name: DeleteRendition :exec
-DELETE FROM renditions WHERE id = ?
+DELETE FROM renditions WHERE id = $1
 `
 
 func (q *Queries) DeleteRendition(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteRendition, id)
+	_, err := q.db.Exec(ctx, deleteRendition, id)
 	return err
 }
 
+const deleteRenditionById = `-- name: DeleteRenditionById :exec
+DELETE FROM renditions WHERE id = $1
+`
+
+func (q *Queries) DeleteRenditionById(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteRenditionById, id)
+	return err
+}
+
+const getAllRenditions = `-- name: GetAllRenditions :many
+SELECT id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at FROM renditions
+`
+
+func (q *Queries) GetAllRenditions(ctx context.Context) ([]Rendition, error) {
+	rows, err := q.db.Query(ctx, getAllRenditions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Rendition
+	for rows.Next() {
+		var i Rendition
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Width,
+			&i.Height,
+			&i.VideoBitrate,
+			&i.AudioBitrate,
+			&i.VideoCodec,
+			&i.AudioCodec,
+			&i.Fps,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRenditionById = `-- name: GetRenditionById :one
-SELECT id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at FROM renditions WHERE id = ? LIMIT 1
+SELECT id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at FROM renditions WHERE id = $1 LIMIT 1
 `
 
 func (q *Queries) GetRenditionById(ctx context.Context, id int64) (Rendition, error) {
-	row := q.db.QueryRowContext(ctx, getRenditionById, id)
+	row := q.db.QueryRow(ctx, getRenditionById, id)
 	var i Rendition
 	err := row.Scan(
 		&i.ID,
@@ -98,11 +138,11 @@ func (q *Queries) GetRenditionById(ctx context.Context, id int64) (Rendition, er
 }
 
 const getRenditionByName = `-- name: GetRenditionByName :one
-SELECT id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at FROM renditions WHERE name = ? LIMIT 1
+SELECT id, name, width, height, video_bitrate, audio_bitrate, video_codec, audio_codec, fps, created_at FROM renditions WHERE name = $1 LIMIT 1
 `
 
 func (q *Queries) GetRenditionByName(ctx context.Context, name string) (Rendition, error) {
-	row := q.db.QueryRowContext(ctx, getRenditionByName, name)
+	row := q.db.QueryRow(ctx, getRenditionByName, name)
 	var i Rendition
 	err := row.Scan(
 		&i.ID,

@@ -34,7 +34,9 @@ func main() {
 	defer conn.Close()
 	trClient := pb.NewTranscoderServiceClient(conn)
 	healthClient := healthpb.NewHealthClient(conn)
-	database, err := db.OpenDatabase()
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	database, err := db.OpenDatabase(dbCtx, config.DatabaseURL)
+	dbCancel()
 	if err != nil {
 		logger.Error("Failed to open database", "error", err)
 		os.Exit(1)
@@ -49,7 +51,6 @@ func main() {
 		config,
 		trClient,
 		healthClient,
-		database,
 		transcoderHandler,
 	)
 	srv := &http.Server{

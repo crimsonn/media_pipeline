@@ -1,11 +1,17 @@
 -- name: GetRenditionById :one
-SELECT * FROM renditions WHERE id = ? LIMIT 1;
+SELECT * FROM renditions WHERE id = $1 LIMIT 1;
 
 -- name: GetRenditionByName :one
-SELECT * FROM renditions WHERE name = ? LIMIT 1;
+SELECT * FROM renditions WHERE name = $1 LIMIT 1;
+
+-- name: GetAllRenditions :many
+SELECT * FROM renditions;
+
+-- name: DeleteRenditionById :exec
+DELETE FROM renditions WHERE id = $1;
 
 -- name: CreateRendition :one
-INSERT INTO renditions(
+INSERT INTO renditions (
   name,
   width,
   height,
@@ -13,11 +19,10 @@ INSERT INTO renditions(
   audio_bitrate,
   video_codec,
   audio_codec,
-  fps,
-  created_at
+  fps
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: DeleteRendition :exec
-DELETE FROM renditions WHERE id = ?;
+DELETE FROM renditions WHERE id = $1;

@@ -5,33 +5,58 @@
 package queries
 
 import (
-	"database/sql"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Job struct {
+	ID              int64
+	SourcePath      string
+	OutputDir       string
+	FileName        string
+	FileID          *string
+	ProfileID       int64
+	Status          string
+	ProgressPercent float32
+	ErrorMessage    *string
+	RetryCount      int32
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type JobTask struct {
+	ID           int64
+	JobID        int64
+	RenditionID  int64
+	Status       string
+	ErrorMessage *string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type ProfileRendition struct {
-	ProfileID   sql.NullInt64
-	RenditionID sql.NullInt64
-	StreamIndex int64
+	ProfileID   int64
+	RenditionID int64
+	StreamIndex int32
 }
 
 type Rendition struct {
 	ID           int64
 	Name         string
-	Width        int64
-	Height       int64
-	VideoBitrate int64
-	AudioBitrate int64
-	VideoCodec   sql.NullString
-	AudioCodec   sql.NullString
-	Fps          sql.NullInt64
-	CreatedAt    interface{}
+	Width        int32
+	Height       int32
+	VideoBitrate int32
+	AudioBitrate int32
+	VideoCodec   string
+	AudioCodec   string
+	Fps          int32
+	CreatedAt    pgtype.Timestamptz
 }
 
 type TranscodeProfile struct {
 	ID             int64
 	Name           string
-	Description    sql.NullString
-	HlsSegmentTime sql.NullInt64
-	IsDefault      sql.NullBool
-	CreatedAt      interface{}
+	Description    *string
+	HlsSegmentTime int32
+	IsDefault      bool
+	CreatedAt      pgtype.Timestamptz
 }

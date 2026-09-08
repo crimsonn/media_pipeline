@@ -3,10 +3,10 @@ package grpc
 import (
 	"log/slog"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/domain"
 	"github.com/crimsonn/media_pipeline/internal/transcoder"
 	"github.com/crimsonn/media_pipeline/pkg/pb"
@@ -22,17 +22,20 @@ type Done struct {
 
 type TranscoderGRPCServer struct {
 	pb.UnimplementedTranscoderServiceServer
-	worker *transcoder.Worker
-	logger *slog.Logger
+	worker  *transcoder.Worker
+	logger  *slog.Logger
+	queries *queries.Queries
 }
 
 func NewTranscoderGRPCServer(
 	worker *transcoder.Worker,
 	logger *slog.Logger,
+	queries *queries.Queries,
 ) *TranscoderGRPCServer {
 	return &TranscoderGRPCServer{
-		worker: worker,
-		logger: logger,
+		worker:  worker,
+		logger:  logger,
+		queries: queries,
 	}
 }
 
@@ -69,15 +72,7 @@ func (s *TranscoderGRPCServer) TranscodeVideo(req *pb.TranscodeVideoRequest, str
 			AudioBitrate: int(resolution.AudioBps),
 		}
 		renditions = append(renditions, rendition)
-		task := &domain.Task{
-			ID:              uuid.New(),
-			SourceFile:      req.SourceFilePath,
-			FilePath:        path.Join(req.OutputDirectory, filenameWithoutExtension, resolution.Name),
-			OutputDirectory: req.OutputDirectory,
-			Rendition:       rendition,
-			BackLog:         backLog,
-		}
-		s.worker.SubmitTask(ctx, task)
+
 	}
 
 	done := make(map[string]Done, len(req.Resolutions))

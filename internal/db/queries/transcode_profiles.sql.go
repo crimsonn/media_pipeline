@@ -7,30 +7,28 @@ package queries
 
 import (
 	"context"
-	"database/sql"
 )
 
 const createTranscodeProfile = `-- name: CreateTranscodeProfile :one
-INSERT INTO transcode_profiles(
+INSERT INTO transcode_profiles (
   name,
   description,
   hls_segment_time,
-  is_default,
-  created_at
+  is_default
 )
-VALUES (?, ?, ?, ?, now())
+VALUES ($1, $2, $3, $4)
 RETURNING id, name, description, hls_segment_time, is_default, created_at
 `
 
 type CreateTranscodeProfileParams struct {
 	Name           string
-	Description    sql.NullString
-	HlsSegmentTime sql.NullInt64
-	IsDefault      sql.NullBool
+	Description    *string
+	HlsSegmentTime int32
+	IsDefault      bool
 }
 
 func (q *Queries) CreateTranscodeProfile(ctx context.Context, arg CreateTranscodeProfileParams) (TranscodeProfile, error) {
-	row := q.db.QueryRowContext(ctx, createTranscodeProfile,
+	row := q.db.QueryRow(ctx, createTranscodeProfile,
 		arg.Name,
 		arg.Description,
 		arg.HlsSegmentTime,
@@ -48,6 +46,82 @@ func (q *Queries) CreateTranscodeProfile(ctx context.Context, arg CreateTranscod
 	return i, err
 }
 
+const getAllTranscodeProfiles = `-- name: GetAllTranscodeProfiles :many
+SELECT
+  p.id AS profile_id,
+  p.name AS profile_name,
+  p.description AS profile_description,
+  p.hls_segment_time,
+  r.id AS rendition_id,
+  r.name AS rendition_name,
+  r.width,
+  r.height,
+  r.video_bitrate,
+  r.audio_bitrate,
+  r.video_codec,
+  r.audio_codec,
+  r.fps,
+  pr.stream_index
+FROM transcode_profiles AS p
+JOIN profile_renditions AS pr
+  ON p.id = pr.profile_id
+JOIN renditions AS r
+  ON r.id = pr.rendition_id
+ORDER BY pr.stream_index
+`
+
+type GetAllTranscodeProfilesRow struct {
+	ProfileID          int64
+	ProfileName        string
+	ProfileDescription *string
+	HlsSegmentTime     int32
+	RenditionID        int64
+	RenditionName      string
+	Width              int32
+	Height             int32
+	VideoBitrate       int32
+	AudioBitrate       int32
+	VideoCodec         string
+	AudioCodec         string
+	Fps                int32
+	StreamIndex        int32
+}
+
+func (q *Queries) GetAllTranscodeProfiles(ctx context.Context) ([]GetAllTranscodeProfilesRow, error) {
+	rows, err := q.db.Query(ctx, getAllTranscodeProfiles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllTranscodeProfilesRow
+	for rows.Next() {
+		var i GetAllTranscodeProfilesRow
+		if err := rows.Scan(
+			&i.ProfileID,
+			&i.ProfileName,
+			&i.ProfileDescription,
+			&i.HlsSegmentTime,
+			&i.RenditionID,
+			&i.RenditionName,
+			&i.Width,
+			&i.Height,
+			&i.VideoBitrate,
+			&i.AudioBitrate,
+			&i.VideoCodec,
+			&i.AudioCodec,
+			&i.Fps,
+			&i.StreamIndex,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getProfileWithRenditions = `-- name: GetProfileWithRenditions :many
 SELECT
   p.id AS profile_id,
@@ -62,6 +136,7 @@ SELECT
   r.audio_bitrate,
   r.video_codec,
   r.audio_codec,
+  r.fps,
   pr.stream_index
 FROM transcode_profiles AS p
 JOIN profile_renditions AS pr
@@ -69,7 +144,7 @@ JOIN profile_renditions AS pr
 JOIN renditions AS r
   ON r.id = pr.rendition_id
 WHERE
-  p.id = ?
+  p.id = $1
 ORDER BY
   pr.stream_index
 `
@@ -77,21 +152,22 @@ ORDER BY
 type GetProfileWithRenditionsRow struct {
 	ProfileID          int64
 	ProfileName        string
-	ProfileDescription sql.NullString
-	HlsSegmentTime     sql.NullInt64
+	ProfileDescription *string
+	HlsSegmentTime     int32
 	RenditionID        int64
 	RenditionName      string
-	Width              int64
-	Height             int64
-	VideoBitrate       int64
-	AudioBitrate       int64
-	VideoCodec         sql.NullString
-	AudioCodec         sql.NullString
-	StreamIndex        int64
+	Width              int32
+	Height             int32
+	VideoBitrate       int32
+	AudioBitrate       int32
+	VideoCodec         string
+	AudioCodec         string
+	Fps                int32
+	StreamIndex        int32
 }
 
 func (q *Queries) GetProfileWithRenditions(ctx context.Context, id int64) ([]GetProfileWithRenditionsRow, error) {
-	rows, err := q.db.QueryContext(ctx, getProfileWithRenditions, id)
+	rows, err := q.db.Query(ctx, getProfileWithRenditions, id)
 	if err != nil {
 		return nil, err
 	}
@@ -112,14 +188,12 @@ func (q *Queries) GetProfileWithRenditions(ctx context.Context, id int64) ([]Get
 			&i.AudioBitrate,
 			&i.VideoCodec,
 			&i.AudioCodec,
+			&i.Fps,
 			&i.StreamIndex,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -128,11 +202,11 @@ func (q *Queries) GetProfileWithRenditions(ctx context.Context, id int64) ([]Get
 }
 
 const getTranscodeProfileByName = `-- name: GetTranscodeProfileByName :one
-SELECT id, name, description, hls_segment_time, is_default, created_at FROM transcode_profiles WHERE name = ? LIMIT 1
+SELECT id, name, description, hls_segment_time, is_default, created_at FROM transcode_profiles WHERE name = $1 LIMIT 1
 `
 
 func (q *Queries) GetTranscodeProfileByName(ctx context.Context, name string) (TranscodeProfile, error) {
-	row := q.db.QueryRowContext(ctx, getTranscodeProfileByName, name)
+	row := q.db.QueryRow(ctx, getTranscodeProfileByName, name)
 	var i TranscodeProfile
 	err := row.Scan(
 		&i.ID,

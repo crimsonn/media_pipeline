@@ -1,10 +1,32 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: media
+      POSTGRES_PASSWORD: media
+      POSTGRES_DB: media_pipeline
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./internal/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media -d media_pipeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   transcoder:
     build:
       context: .
       target: transcoder
     environment:
       TRANSCODER_ADDR: ":50051"
+      DATABASE_URL: postgres://media:media@postgres:5432/media_pipeline?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./watch:/data/watch
       - ./done:/data/done
@@ -23,9 +45,16 @@ services:
       WATCHDOG_DELAY: 5s
       NUM_WORKERS: "10"
       QUEUE_CAPACITY: "100"
+      DATABASE_URL: postgres://media:media@postgres:5432/media_pipeline?sslmode=disable
     volumes:
       - ./watch:/data/watch
       - ./done:/data/done
     depends_on:
-      - transcoder
+      postgres:
+        condition: service_healthy
+      transcoder:
+        condition: service_started
     restart: unless-stopped
+
+volumes:
+  postgres_data:

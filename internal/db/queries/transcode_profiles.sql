@@ -12,6 +12,7 @@ SELECT
   r.audio_bitrate,
   r.video_codec,
   r.audio_codec,
+  r.fps,
   pr.stream_index
 FROM transcode_profiles AS p
 JOIN profile_renditions AS pr
@@ -19,20 +20,41 @@ JOIN profile_renditions AS pr
 JOIN renditions AS r
   ON r.id = pr.rendition_id
 WHERE
-  p.id = ?
+  p.id = $1
 ORDER BY
   pr.stream_index;
 
+-- name: GetAllTranscodeProfiles :many
+SELECT
+  p.id AS profile_id,
+  p.name AS profile_name,
+  p.description AS profile_description,
+  p.hls_segment_time,
+  r.id AS rendition_id,
+  r.name AS rendition_name,
+  r.width,
+  r.height,
+  r.video_bitrate,
+  r.audio_bitrate,
+  r.video_codec,
+  r.audio_codec,
+  r.fps,
+  pr.stream_index
+FROM transcode_profiles AS p
+JOIN profile_renditions AS pr
+  ON p.id = pr.profile_id
+JOIN renditions AS r
+  ON r.id = pr.rendition_id
+ORDER BY pr.stream_index;
 -- name: GetTranscodeProfileByName :one
-SELECT * FROM transcode_profiles WHERE name = ? LIMIT 1;
+SELECT * FROM transcode_profiles WHERE name = $1 LIMIT 1;
 
 -- name: CreateTranscodeProfile :one
-INSERT INTO transcode_profiles(
+INSERT INTO transcode_profiles (
   name,
   description,
   hls_segment_time,
-  is_default,
-  created_at
+  is_default
 )
-VALUES (?, ?, ?, ?, now())
+VALUES ($1, $2, $3, $4)
 RETURNING *;
