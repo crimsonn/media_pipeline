@@ -43,7 +43,7 @@ Two processes, one gRPC contract (`TranscoderService.TranscodeVideo` in `api/pro
 
 - New filenames are queued (capacity `QUEUE_CAPACITY`).
 - A worker watches `mtime`. If the file has not changed for two consecutive checks, it is treated as fully written (so a copy-in-progress is not transcoded).
-- It then opens a streaming RPC to the transcoder with the source path, output dir (`./done`), and the rendition list.
+- It then opens a streaming RPC to the transcoder with the source path, output dir (`WATCHDOG_OUTPUT`, default `./done`), and the rendition list.
 
 ### 2. Transcoder — encode
 
@@ -113,6 +113,8 @@ pkg/pb/                  generated Go stubs
 internal/config/         env helpers (defaults if unset)
 watch/                   drop source files here (gitignored)
 done/                    HLS output (gitignored)
+Dockerfile               multi-stage build (watchdog + transcoder)
+docker-compose.yml       shared watch/done volumes
 ```
 
 ## Prerequisites
@@ -138,12 +140,27 @@ cp /path/to/clip.mp4 watch/
 
 Wait until the watchdog decides the file is stable, then check `done/<basename>/master.m3u8`.
 
-Config is read from the process environment (`internal/config`). Defaults match a local run; copy `.env.example` if you want a reminder of the knobs.
+### Docker
+
+You do **not** copy files into the container. `./watch` on your machine is bind-mounted into both services at `/data/watch`, and `./done` at `/data/done`. The watchdog only sees whatever you drop on the host.
+
+```bash
+mkdir -p watch done
+docker compose up --build
+cp /path/to/clip.mp4 watch/
+```
+
+HLS shows up in `./done/<basename>/` on the host (play `master.m3u8` with VLC). After a successful job the file is removed from `watch/`.
+
+Both containers share those folders because the transcoder runs ffmpeg on the **path the watchdog sends** (`/data/watch/clip.mp4`). If the mounts did not match, ffmpeg would look for a file that only exists in the other container.
+
+Config is read from the process environment (`internal/config`). Defaults match a local run; copy `.env.example` if you want a reminder of the knobs. Docker Compose sets its own env in `docker-compose.yml`.
 
 | variable | default | used by |
 |----------|---------|---------|
-| `TRANSCODER_ADDR` | `:50051` | both |
-| `WATCHDOG_FOLDER` | `./watch` | watchdog |
+| `TRANSCODER_ADDR` | `:50051` | both (watchdog dials `transcoder:50051` in Compose) |
+| `WATCHDOG_FOLDER` | `./watch` | watchdog (`/data/watch` in Compose) |
+| `WATCHDOG_OUTPUT` | `./done` | watchdog (`/data/done` in Compose) |
 | `WATCHDOG_DELAY` | `5s` | parsed at startup |
 | `NUM_WORKERS` | `10` | watchdog queue workers |
 | `QUEUE_CAPACITY` | `100` | watchdog task channel |

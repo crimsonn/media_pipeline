@@ -32,6 +32,7 @@ func run(addr string) error {
 	}
 	defer conn.Close()
 	watchDogFolder := config.GetEnvString("WATCHDOG_FOLDER", "./watch")
+	outputDirectory := config.GetEnvString("WATCHDOG_OUTPUT", "./done")
 	watchDogDelay := config.GetEnvString("WATCHDOG_DELAY", "5s")
 	delay, err := time.ParseDuration(watchDogDelay)
 	if err != nil {
@@ -40,6 +41,6 @@ func run(addr string) error {
 	numWorkers := config.GetEnvInt("NUM_WORKERS", 10)
 	queueCapacity := config.GetEnvInt("QUEUE_CAPACITY", 100)
 	transcoder := pb.NewTranscoderServiceClient(conn)
-	orchestrator := watchdog.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, transcoder)
+	orchestrator := watchdog.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, outputDirectory, transcoder)
 	return orchestrator.Start()
 }

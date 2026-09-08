@@ -1,0 +1,31 @@
+services:
+  transcoder:
+    build:
+      context: .
+      target: transcoder
+    environment:
+      TRANSCODER_ADDR: ":50051"
+    volumes:
+      - ./watch:/data/watch
+      - ./done:/data/done
+    ports:
+      - "50051:50051"
+    restart: unless-stopped
+
+  watchdog:
+    build:
+      context: .
+      target: watchdog
+    environment:
+      TRANSCODER_ADDR: transcoder:50051
+      WATCHDOG_FOLDER: /data/watch
+      WATCHDOG_OUTPUT: /data/done
+      WATCHDOG_DELAY: 5s
+      NUM_WORKERS: "10"
+      QUEUE_CAPACITY: "100"
+    volumes:
+      - ./watch:/data/watch
+      - ./done:/data/done
+    depends_on:
+      - transcoder
+    restart: unless-stopped

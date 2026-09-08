@@ -27,14 +27,15 @@ const (
 )
 
 type Orchestrator struct {
-	numWorkers     int
-	tasks          chan *Task
-	wg             sync.WaitGroup
-	logger         *slog.Logger
-	watchDirectory string
-	transcoder     pb.TranscoderServiceClient
-	filesChecked   map[string]bool
-	mu             sync.Mutex
+	numWorkers      int
+	tasks           chan *Task
+	wg              sync.WaitGroup
+	logger          *slog.Logger
+	watchDirectory  string
+	outputDirectory string
+	transcoder      pb.TranscoderServiceClient
+	filesChecked    map[string]bool
+	mu              sync.Mutex
 }
 
 type Task struct {
@@ -52,19 +53,22 @@ func NewOrchestrator(
 	queueCapacity int,
 	pollingInterval time.Duration,
 	watchDirectory string,
+	outputDirectory string,
 	transcoder pb.TranscoderServiceClient,
 ) *Orchestrator {
 	logger := slog.Default()
 	logger.Info("starting workers", "count", numWorkers)
 	logger.Info("queue capacity", "capacity", queueCapacity)
 	logger.Info("watch directory", "directory", watchDirectory)
+	logger.Info("output directory", "directory", outputDirectory)
 	return &Orchestrator{
-		logger:         logger,
-		tasks:          make(chan *Task, queueCapacity),
-		numWorkers:     numWorkers,
-		watchDirectory: watchDirectory,
-		transcoder:     transcoder,
-		filesChecked:   make(map[string]bool),
+		logger:          logger,
+		tasks:           make(chan *Task, queueCapacity),
+		numWorkers:      numWorkers,
+		watchDirectory:  watchDirectory,
+		outputDirectory: outputDirectory,
+		transcoder:      transcoder,
+		filesChecked:    make(map[string]bool),
 	}
 }
 
@@ -156,7 +160,7 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 					FileName:        task.fileName,
 					FileId:          task.id.String(),
 					SourceFilePath:  filePath,
-					OutputDirectory: "./done",
+					OutputDirectory: o.outputDirectory,
 					Resolutions: []*pb.TranscodeResolution{
 						{
 							Name:     "1080p",
