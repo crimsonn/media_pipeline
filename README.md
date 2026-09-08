@@ -178,3 +178,31 @@ make proto
 - Segment duration and keyframe interval should match; otherwise HLS switches can glitch.
 - The watchdog’s “file stopped changing” check is a simple substitute for a real upload-complete signal.
 - Source deletion on success is convenient for a lab and dangerous if you still need the original.
+
+## Next steps
+
+This file is also a progress log. The pipeline already accepts a list of renditions on `TranscodeVideoRequest`; the watchdog just hardcodes 1080p + 720p in `services/watchdog/orchestrator.go`. Next is to treat that list as a **named profile** you edit in a UI and persist, instead of a literal in code.
+
+### Encoding profiles
+
+A profile is a reusable ABR ladder: name + ordered renditions (`name`, `width`, `height`, `video_bps`, `audio_bps` — same fields as `TranscodeResolution`). Examples: `web-default`, `mobile`, `archive-1080`.
+
+- Store profiles in a database (SQLite is enough for a local lab; Postgres if you want it in Compose).
+- Watchdog (or a small API in front of it) loads a profile by id and passes `resolutions` through gRPC. ffmpeg does not change; only where the ladder comes from does.
+- Keep one “default” profile so drop-in-`watch/` still works without clicking through the UI.
+
+### UI
+
+A simple app to:
+
+- CRUD profiles and their renditions (add 480p, drop 1080p, tweak bitrates).
+- See jobs: file in, profile used, state, link to `done/<name>/master.m3u8`.
+- Optionally pick a profile per job, or set which profile the watchdog applies to new files.
+
+The UI talks to an HTTP API; the transcoder stays gRPC + ffmpeg.
+
+### Later (when the above works)
+
+- Wire `TRANSCODER_WORKERS` and real ffmpeg `%` progress on the stream.
+- Play HLS in the browser (hls.js) instead of only VLC.
+- Stop deleting the source until you choose to; keep originals under `watch/` or an archive folder.
