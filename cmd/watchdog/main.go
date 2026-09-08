@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
+	"github.com/crimsonn/media_pipeline/pkg/pb"
 	"github.com/crimsonn/media_pipeline/services/watchdog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -47,13 +48,9 @@ func run(addr string) error {
 	if err != nil {
 		return fmt.Errorf("cant parse duration from delay: %w", err)
 	}
-	watcher := watchdog.NewWatcher(watchDogFolder, delay, conn)
-	return watcher.Start()
-}
-
-func envOrDefault(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+	numWorkers := config.GetEnvInt("NUM_WORKERS", 10)
+	queueCapacity := config.GetEnvInt("QUEUE_CAPACITY", 100)
+	transcoder := pb.NewTranscoderServiceClient(conn)
+	orchestrator := watchdog.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, transcoder)
+	return orchestrator.Start()
 }

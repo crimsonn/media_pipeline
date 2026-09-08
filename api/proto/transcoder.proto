@@ -5,8 +5,24 @@ package transcoder.v1;
 option go_package = "github.com/crimsonn/media_pipeline/pkg/pb;pb";
 
 
+enum TranscodeState {
+  STATE_PROCESSING = 0;
+  STATE_COMPLETED = 1;
+  STATE_FAILED = 3;
+}
+
+message TranscodeProgress {
+  string task_id = 1;
+  TranscodeState state = 2;
+  int32 percent_complete = 3;
+  string error_message = 4;
+}
+
+
+
+
 service TranscoderService {
-  rpc TranscodeVideo (TranscodeRequest) returns (TranscodeResponse);
+  rpc TranscodeVideo (TranscodeRequest) returns (stream TranscodeProgress);
 }
 
 message TranscodeRequest {
@@ -14,13 +30,5 @@ message TranscodeRequest {
   string source_file_path = 2;
   string output_directory = 3;
   repeated string target_resolutions = 4;
-}
-
-message TranscodeResponse {
-  string file_id = 1;
-  bool success = 2;
-  string master_playlist_url = 3;
-  double duration_seconds = 4;
-  string error_message = 5;
 }
 
