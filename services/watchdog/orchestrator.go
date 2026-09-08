@@ -137,9 +137,6 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 				o.logger.Error("file not found", "error", err)
 				return
 			}
-			o.logger.Info("FILE TIME", fileInfo.ModTime().Unix())
-			o.logger.Info("TASK LAST CHECKED AT", task.lastCheckedAt.Unix())
-			o.logger.Info("TASK TRIES", task.tries)
 
 			if fileInfo.ModTime().Unix() == task.lastCheckedAt.Unix() {
 				task.tries++
@@ -149,17 +146,33 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 				task.tries = 0
 			}
 			if fileInfo.ModTime().Before(task.lastCheckedAt) {
-				// Means either the transcoding failed and didnt move the file or something else went wrong
+				// Means either the transcoding failed and didnt remove the file or something else went wrong
 				task.tries++
 			}
 
-			if task.tries >= 5 {
-
-				stream, err := o.transcoder.TranscodeVideo(ctx, &pb.TranscodeRequest{
-					FileId:            task.id.String(),
-					SourceFilePath:    filePath,
-					OutputDirectory:   "./done",
-					TargetResolutions: []string{"1080p", "720p", "480p"},
+			if task.tries >= 2 {
+				o.logger.Info("task exceeded max tries, submitting for transcoding", "file_id", task.id.String())
+				stream, err := o.transcoder.TranscodeVideo(ctx, &pb.TranscodeVideoRequest{
+					FileName:        task.fileName,
+					FileId:          task.id.String(),
+					SourceFilePath:  filePath,
+					OutputDirectory: "./done",
+					Resolutions: []*pb.TranscodeResolution{
+						{
+							Name:     "1080p",
+							Width:    1920,
+							Height:   1080,
+							VideoBps: 5_000_000,
+							AudioBps: 128_000,
+						},
+						{
+							Name:     "720p",
+							Width:    1280,
+							Height:   720,
+							VideoBps: 2_000_000,
+							AudioBps: 128_000,
+						},
+					},
 				})
 				if err != nil {
 					o.logger.Error("transcoding failed or was cancelled", "error", err)
@@ -182,12 +195,12 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 					}
 
 					switch progress.State {
-					case pb.TranscodeState_STATE_PROCESSING:
+					case pb.TranscodeState_TRANSCODE_STATE_IN_PROGRESS:
 						o.logger.Info("transcoding in progress", "taskId", task.id, "percentComplete", progress.PercentComplete)
-					case pb.TranscodeState_STATE_COMPLETED:
+					case pb.TranscodeState_TRANSCODE_STATE_COMPLETED:
 						o.logger.Info("transcoding completed", "taskId", task.id)
 						task.status = Completed
-					case pb.TranscodeState_STATE_FAILED:
+					case pb.TranscodeState_TRANSCODE_STATE_FAILED:
 						o.logger.Error("transcoding failed", "taskId", task.id, "error", progress.ErrorMessage)
 						task.status = Failed
 						task.error = errors.New(progress.ErrorMessage)

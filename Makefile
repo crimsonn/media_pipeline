@@ -1,14 +1,16 @@
-PROTO_DIR := api/proto
-PB_DIR    := pkg/pb
+PROTO_DIR  := api/proto
+PB_DIR     := pkg/pb
+GO_MODULE  := github.com/crimsonn/media_pipeline
+PROTO_FILES := $(shell find $(PROTO_DIR) -name '*.proto')
 
 .PHONY: proto
 proto:
 	@mkdir -p $(PB_DIR)
 	protoc -I $(PROTO_DIR) \
-		--go_out=$(PB_DIR) --go_opt=paths=source_relative \
-		--go-grpc_out=$(PB_DIR) --go-grpc_opt=paths=source_relative \
-		$(PROTO_DIR)/*.proto
+		--go_out=. --go_opt=module=$(GO_MODULE) \
+		--go-grpc_out=. --go-grpc_opt=module=$(GO_MODULE) \
+		$(PROTO_FILES)
 
 .PHONY: proto-clean
 proto-clean:
-	rm -f $(PB_DIR)/*.pb.go
+	rm -rf $(PB_DIR)

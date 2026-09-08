@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        v5.29.3
-// source: transcoder.proto
+// source: transcoder/v1/transcoder.proto
 
 package pb
 
@@ -24,22 +24,25 @@ const (
 type TranscodeState int32
 
 const (
-	TranscodeState_STATE_PROCESSING TranscodeState = 0
-	TranscodeState_STATE_COMPLETED  TranscodeState = 1
-	TranscodeState_STATE_FAILED     TranscodeState = 3
+	TranscodeState_TRANSCODE_STATE_UNSPECIFIED TranscodeState = 0
+	TranscodeState_TRANSCODE_STATE_IN_PROGRESS TranscodeState = 1
+	TranscodeState_TRANSCODE_STATE_COMPLETED   TranscodeState = 2
+	TranscodeState_TRANSCODE_STATE_FAILED      TranscodeState = 3
 )
 
 // Enum value maps for TranscodeState.
 var (
 	TranscodeState_name = map[int32]string{
-		0: "STATE_PROCESSING",
-		1: "STATE_COMPLETED",
-		3: "STATE_FAILED",
+		0: "TRANSCODE_STATE_UNSPECIFIED",
+		1: "TRANSCODE_STATE_IN_PROGRESS",
+		2: "TRANSCODE_STATE_COMPLETED",
+		3: "TRANSCODE_STATE_FAILED",
 	}
 	TranscodeState_value = map[string]int32{
-		"STATE_PROCESSING": 0,
-		"STATE_COMPLETED":  1,
-		"STATE_FAILED":     3,
+		"TRANSCODE_STATE_UNSPECIFIED": 0,
+		"TRANSCODE_STATE_IN_PROGRESS": 1,
+		"TRANSCODE_STATE_COMPLETED":   2,
+		"TRANSCODE_STATE_FAILED":      3,
 	}
 )
 
@@ -54,11 +57,11 @@ func (x TranscodeState) String() string {
 }
 
 func (TranscodeState) Descriptor() protoreflect.EnumDescriptor {
-	return file_transcoder_proto_enumTypes[0].Descriptor()
+	return file_transcoder_v1_transcoder_proto_enumTypes[0].Descriptor()
 }
 
 func (TranscodeState) Type() protoreflect.EnumType {
-	return &file_transcoder_proto_enumTypes[0]
+	return &file_transcoder_v1_transcoder_proto_enumTypes[0]
 }
 
 func (x TranscodeState) Number() protoreflect.EnumNumber {
@@ -67,34 +70,35 @@ func (x TranscodeState) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TranscodeState.Descriptor instead.
 func (TranscodeState) EnumDescriptor() ([]byte, []int) {
-	return file_transcoder_proto_rawDescGZIP(), []int{0}
+	return file_transcoder_v1_transcoder_proto_rawDescGZIP(), []int{0}
 }
 
-type TranscodeProgress struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	State           TranscodeState         `protobuf:"varint,2,opt,name=state,proto3,enum=transcoder.v1.TranscodeState" json:"state,omitempty"`
-	PercentComplete int32                  `protobuf:"varint,3,opt,name=percent_complete,json=percentComplete,proto3" json:"percent_complete,omitempty"`
-	ErrorMessage    string                 `protobuf:"bytes,4,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+type TranscodeResolution struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Width         int32                  `protobuf:"varint,2,opt,name=width,proto3" json:"width,omitempty"`
+	Height        int32                  `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
+	VideoBps      int32                  `protobuf:"varint,4,opt,name=video_bps,json=videoBps,proto3" json:"video_bps,omitempty"`
+	AudioBps      int32                  `protobuf:"varint,5,opt,name=audio_bps,json=audioBps,proto3" json:"audio_bps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TranscodeProgress) Reset() {
-	*x = TranscodeProgress{}
-	mi := &file_transcoder_proto_msgTypes[0]
+func (x *TranscodeResolution) Reset() {
+	*x = TranscodeResolution{}
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TranscodeProgress) String() string {
+func (x *TranscodeResolution) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TranscodeProgress) ProtoMessage() {}
+func (*TranscodeResolution) ProtoMessage() {}
 
-func (x *TranscodeProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_transcoder_proto_msgTypes[0]
+func (x *TranscodeResolution) ProtoReflect() protoreflect.Message {
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -105,64 +109,140 @@ func (x *TranscodeProgress) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TranscodeProgress.ProtoReflect.Descriptor instead.
-func (*TranscodeProgress) Descriptor() ([]byte, []int) {
-	return file_transcoder_proto_rawDescGZIP(), []int{0}
+// Deprecated: Use TranscodeResolution.ProtoReflect.Descriptor instead.
+func (*TranscodeResolution) Descriptor() ([]byte, []int) {
+	return file_transcoder_v1_transcoder_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *TranscodeProgress) GetTaskId() string {
+func (x *TranscodeResolution) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TranscodeResolution) GetWidth() int32 {
+	if x != nil {
+		return x.Width
+	}
+	return 0
+}
+
+func (x *TranscodeResolution) GetHeight() int32 {
+	if x != nil {
+		return x.Height
+	}
+	return 0
+}
+
+func (x *TranscodeResolution) GetVideoBps() int32 {
+	if x != nil {
+		return x.VideoBps
+	}
+	return 0
+}
+
+func (x *TranscodeResolution) GetAudioBps() int32 {
+	if x != nil {
+		return x.AudioBps
+	}
+	return 0
+}
+
+type TranscodeVideoResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	TaskId          string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	State           TranscodeState         `protobuf:"varint,2,opt,name=state,proto3,enum=transcoder.v1.TranscodeState" json:"state,omitempty"`
+	PercentComplete int32                  `protobuf:"varint,3,opt,name=percent_complete,json=percentComplete,proto3" json:"percent_complete,omitempty"`
+	ErrorMessage    string                 `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TranscodeVideoResponse) Reset() {
+	*x = TranscodeVideoResponse{}
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TranscodeVideoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TranscodeVideoResponse) ProtoMessage() {}
+
+func (x *TranscodeVideoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TranscodeVideoResponse.ProtoReflect.Descriptor instead.
+func (*TranscodeVideoResponse) Descriptor() ([]byte, []int) {
+	return file_transcoder_v1_transcoder_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TranscodeVideoResponse) GetTaskId() string {
 	if x != nil {
 		return x.TaskId
 	}
 	return ""
 }
 
-func (x *TranscodeProgress) GetState() TranscodeState {
+func (x *TranscodeVideoResponse) GetState() TranscodeState {
 	if x != nil {
 		return x.State
 	}
-	return TranscodeState_STATE_PROCESSING
+	return TranscodeState_TRANSCODE_STATE_UNSPECIFIED
 }
 
-func (x *TranscodeProgress) GetPercentComplete() int32 {
+func (x *TranscodeVideoResponse) GetPercentComplete() int32 {
 	if x != nil {
 		return x.PercentComplete
 	}
 	return 0
 }
 
-func (x *TranscodeProgress) GetErrorMessage() string {
+func (x *TranscodeVideoResponse) GetErrorMessage() string {
 	if x != nil {
 		return x.ErrorMessage
 	}
 	return ""
 }
 
-type TranscodeRequest struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	FileId            string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	SourceFilePath    string                 `protobuf:"bytes,2,opt,name=source_file_path,json=sourceFilePath,proto3" json:"source_file_path,omitempty"`
-	OutputDirectory   string                 `protobuf:"bytes,3,opt,name=output_directory,json=outputDirectory,proto3" json:"output_directory,omitempty"`
-	TargetResolutions []string               `protobuf:"bytes,4,rep,name=target_resolutions,json=targetResolutions,proto3" json:"target_resolutions,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+type TranscodeVideoRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	FileName        string                 `protobuf:"bytes,1,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
+	FileId          string                 `protobuf:"bytes,2,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
+	SourceFilePath  string                 `protobuf:"bytes,3,opt,name=source_file_path,json=sourceFilePath,proto3" json:"source_file_path,omitempty"`
+	OutputDirectory string                 `protobuf:"bytes,4,opt,name=output_directory,json=outputDirectory,proto3" json:"output_directory,omitempty"`
+	Resolutions     []*TranscodeResolution `protobuf:"bytes,5,rep,name=resolutions,proto3" json:"resolutions,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
-func (x *TranscodeRequest) Reset() {
-	*x = TranscodeRequest{}
-	mi := &file_transcoder_proto_msgTypes[1]
+func (x *TranscodeVideoRequest) Reset() {
+	*x = TranscodeVideoRequest{}
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TranscodeRequest) String() string {
+func (x *TranscodeVideoRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TranscodeRequest) ProtoMessage() {}
+func (*TranscodeVideoRequest) ProtoMessage() {}
 
-func (x *TranscodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_transcoder_proto_msgTypes[1]
+func (x *TranscodeVideoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_transcoder_v1_transcoder_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -173,112 +253,129 @@ func (x *TranscodeRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TranscodeRequest.ProtoReflect.Descriptor instead.
-func (*TranscodeRequest) Descriptor() ([]byte, []int) {
-	return file_transcoder_proto_rawDescGZIP(), []int{1}
+// Deprecated: Use TranscodeVideoRequest.ProtoReflect.Descriptor instead.
+func (*TranscodeVideoRequest) Descriptor() ([]byte, []int) {
+	return file_transcoder_v1_transcoder_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *TranscodeRequest) GetFileId() string {
+func (x *TranscodeVideoRequest) GetFileName() string {
+	if x != nil {
+		return x.FileName
+	}
+	return ""
+}
+
+func (x *TranscodeVideoRequest) GetFileId() string {
 	if x != nil {
 		return x.FileId
 	}
 	return ""
 }
 
-func (x *TranscodeRequest) GetSourceFilePath() string {
+func (x *TranscodeVideoRequest) GetSourceFilePath() string {
 	if x != nil {
 		return x.SourceFilePath
 	}
 	return ""
 }
 
-func (x *TranscodeRequest) GetOutputDirectory() string {
+func (x *TranscodeVideoRequest) GetOutputDirectory() string {
 	if x != nil {
 		return x.OutputDirectory
 	}
 	return ""
 }
 
-func (x *TranscodeRequest) GetTargetResolutions() []string {
+func (x *TranscodeVideoRequest) GetResolutions() []*TranscodeResolution {
 	if x != nil {
-		return x.TargetResolutions
+		return x.Resolutions
 	}
 	return nil
 }
 
-var File_transcoder_proto protoreflect.FileDescriptor
+var File_transcoder_v1_transcoder_proto protoreflect.FileDescriptor
 
-const file_transcoder_proto_rawDesc = "" +
+const file_transcoder_v1_transcoder_proto_rawDesc = "" +
 	"\n" +
-	"\x10transcoder.proto\x12\rtranscoder.v1\"\xb1\x01\n" +
-	"\x11TranscodeProgress\x12\x17\n" +
+	"\x1etranscoder/v1/transcoder.proto\x12\rtranscoder.v1\"\x91\x01\n" +
+	"\x13TranscodeResolution\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05width\x18\x02 \x01(\x05R\x05width\x12\x16\n" +
+	"\x06height\x18\x03 \x01(\x05R\x06height\x12\x1b\n" +
+	"\tvideo_bps\x18\x04 \x01(\x05R\bvideoBps\x12\x1b\n" +
+	"\taudio_bps\x18\x05 \x01(\x05R\baudioBps\"\xb6\x01\n" +
+	"\x16TranscodeVideoResponse\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x123\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1d.transcoder.v1.TranscodeStateR\x05state\x12)\n" +
 	"\x10percent_complete\x18\x03 \x01(\x05R\x0fpercentComplete\x12#\n" +
-	"\rerror_message\x18\x04 \x01(\tR\ferrorMessage\"\xaf\x01\n" +
-	"\x10TranscodeRequest\x12\x17\n" +
-	"\afile_id\x18\x01 \x01(\tR\x06fileId\x12(\n" +
-	"\x10source_file_path\x18\x02 \x01(\tR\x0esourceFilePath\x12)\n" +
-	"\x10output_directory\x18\x03 \x01(\tR\x0foutputDirectory\x12-\n" +
-	"\x12target_resolutions\x18\x04 \x03(\tR\x11targetResolutions*M\n" +
-	"\x0eTranscodeState\x12\x14\n" +
-	"\x10STATE_PROCESSING\x10\x00\x12\x13\n" +
-	"\x0fSTATE_COMPLETED\x10\x01\x12\x10\n" +
-	"\fSTATE_FAILED\x10\x032j\n" +
-	"\x11TranscoderService\x12U\n" +
-	"\x0eTranscodeVideo\x12\x1f.transcoder.v1.TranscodeRequest\x1a .transcoder.v1.TranscodeProgress0\x01B.Z,github.com/crimsonn/media_pipeline/pkg/pb;pbb\x06proto3"
+	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\"\xe8\x01\n" +
+	"\x15TranscodeVideoRequest\x12\x1b\n" +
+	"\tfile_name\x18\x01 \x01(\tR\bfileName\x12\x17\n" +
+	"\afile_id\x18\x02 \x01(\tR\x06fileId\x12(\n" +
+	"\x10source_file_path\x18\x03 \x01(\tR\x0esourceFilePath\x12)\n" +
+	"\x10output_directory\x18\x04 \x01(\tR\x0foutputDirectory\x12D\n" +
+	"\vresolutions\x18\x05 \x03(\v2\".transcoder.v1.TranscodeResolutionR\vresolutions*\x8d\x01\n" +
+	"\x0eTranscodeState\x12\x1f\n" +
+	"\x1bTRANSCODE_STATE_UNSPECIFIED\x10\x00\x12\x1f\n" +
+	"\x1bTRANSCODE_STATE_IN_PROGRESS\x10\x01\x12\x1d\n" +
+	"\x19TRANSCODE_STATE_COMPLETED\x10\x02\x12\x1a\n" +
+	"\x16TRANSCODE_STATE_FAILED\x10\x032t\n" +
+	"\x11TranscoderService\x12_\n" +
+	"\x0eTranscodeVideo\x12$.transcoder.v1.TranscodeVideoRequest\x1a%.transcoder.v1.TranscodeVideoResponse0\x01B.Z,github.com/crimsonn/media_pipeline/pkg/pb;pbb\x06proto3"
 
 var (
-	file_transcoder_proto_rawDescOnce sync.Once
-	file_transcoder_proto_rawDescData []byte
+	file_transcoder_v1_transcoder_proto_rawDescOnce sync.Once
+	file_transcoder_v1_transcoder_proto_rawDescData []byte
 )
 
-func file_transcoder_proto_rawDescGZIP() []byte {
-	file_transcoder_proto_rawDescOnce.Do(func() {
-		file_transcoder_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_transcoder_proto_rawDesc), len(file_transcoder_proto_rawDesc)))
+func file_transcoder_v1_transcoder_proto_rawDescGZIP() []byte {
+	file_transcoder_v1_transcoder_proto_rawDescOnce.Do(func() {
+		file_transcoder_v1_transcoder_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_transcoder_v1_transcoder_proto_rawDesc), len(file_transcoder_v1_transcoder_proto_rawDesc)))
 	})
-	return file_transcoder_proto_rawDescData
+	return file_transcoder_v1_transcoder_proto_rawDescData
 }
 
-var file_transcoder_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_transcoder_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_transcoder_proto_goTypes = []any{
-	(TranscodeState)(0),       // 0: transcoder.v1.TranscodeState
-	(*TranscodeProgress)(nil), // 1: transcoder.v1.TranscodeProgress
-	(*TranscodeRequest)(nil),  // 2: transcoder.v1.TranscodeRequest
+var file_transcoder_v1_transcoder_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_transcoder_v1_transcoder_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_transcoder_v1_transcoder_proto_goTypes = []any{
+	(TranscodeState)(0),            // 0: transcoder.v1.TranscodeState
+	(*TranscodeResolution)(nil),    // 1: transcoder.v1.TranscodeResolution
+	(*TranscodeVideoResponse)(nil), // 2: transcoder.v1.TranscodeVideoResponse
+	(*TranscodeVideoRequest)(nil),  // 3: transcoder.v1.TranscodeVideoRequest
 }
-var file_transcoder_proto_depIdxs = []int32{
-	0, // 0: transcoder.v1.TranscodeProgress.state:type_name -> transcoder.v1.TranscodeState
-	2, // 1: transcoder.v1.TranscoderService.TranscodeVideo:input_type -> transcoder.v1.TranscodeRequest
-	1, // 2: transcoder.v1.TranscoderService.TranscodeVideo:output_type -> transcoder.v1.TranscodeProgress
-	2, // [2:3] is the sub-list for method output_type
-	1, // [1:2] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+var file_transcoder_v1_transcoder_proto_depIdxs = []int32{
+	0, // 0: transcoder.v1.TranscodeVideoResponse.state:type_name -> transcoder.v1.TranscodeState
+	1, // 1: transcoder.v1.TranscodeVideoRequest.resolutions:type_name -> transcoder.v1.TranscodeResolution
+	3, // 2: transcoder.v1.TranscoderService.TranscodeVideo:input_type -> transcoder.v1.TranscodeVideoRequest
+	2, // 3: transcoder.v1.TranscoderService.TranscodeVideo:output_type -> transcoder.v1.TranscodeVideoResponse
+	3, // [3:4] is the sub-list for method output_type
+	2, // [2:3] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
-func init() { file_transcoder_proto_init() }
-func file_transcoder_proto_init() {
-	if File_transcoder_proto != nil {
+func init() { file_transcoder_v1_transcoder_proto_init() }
+func file_transcoder_v1_transcoder_proto_init() {
+	if File_transcoder_v1_transcoder_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transcoder_proto_rawDesc), len(file_transcoder_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transcoder_v1_transcoder_proto_rawDesc), len(file_transcoder_v1_transcoder_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_transcoder_proto_goTypes,
-		DependencyIndexes: file_transcoder_proto_depIdxs,
-		EnumInfos:         file_transcoder_proto_enumTypes,
-		MessageInfos:      file_transcoder_proto_msgTypes,
+		GoTypes:           file_transcoder_v1_transcoder_proto_goTypes,
+		DependencyIndexes: file_transcoder_v1_transcoder_proto_depIdxs,
+		EnumInfos:         file_transcoder_v1_transcoder_proto_enumTypes,
+		MessageInfos:      file_transcoder_v1_transcoder_proto_msgTypes,
 	}.Build()
-	File_transcoder_proto = out.File
-	file_transcoder_proto_goTypes = nil
-	file_transcoder_proto_depIdxs = nil
+	File_transcoder_v1_transcoder_proto = out.File
+	file_transcoder_v1_transcoder_proto_goTypes = nil
+	file_transcoder_v1_transcoder_proto_depIdxs = nil
 }

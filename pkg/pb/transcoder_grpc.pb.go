@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v5.29.3
-// source: transcoder.proto
+// source: transcoder/v1/transcoder.proto
 
 package pb
 
@@ -26,7 +26,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TranscoderServiceClient interface {
-	TranscodeVideo(ctx context.Context, in *TranscodeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TranscodeProgress], error)
+	TranscodeVideo(ctx context.Context, in *TranscodeVideoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TranscodeVideoResponse], error)
 }
 
 type transcoderServiceClient struct {
@@ -37,13 +37,13 @@ func NewTranscoderServiceClient(cc grpc.ClientConnInterface) TranscoderServiceCl
 	return &transcoderServiceClient{cc}
 }
 
-func (c *transcoderServiceClient) TranscodeVideo(ctx context.Context, in *TranscodeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TranscodeProgress], error) {
+func (c *transcoderServiceClient) TranscodeVideo(ctx context.Context, in *TranscodeVideoRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TranscodeVideoResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &TranscoderService_ServiceDesc.Streams[0], TranscoderService_TranscodeVideo_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[TranscodeRequest, TranscodeProgress]{ClientStream: stream}
+	x := &grpc.GenericClientStream[TranscodeVideoRequest, TranscodeVideoResponse]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -54,13 +54,13 @@ func (c *transcoderServiceClient) TranscodeVideo(ctx context.Context, in *Transc
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type TranscoderService_TranscodeVideoClient = grpc.ServerStreamingClient[TranscodeProgress]
+type TranscoderService_TranscodeVideoClient = grpc.ServerStreamingClient[TranscodeVideoResponse]
 
 // TranscoderServiceServer is the server API for TranscoderService service.
 // All implementations must embed UnimplementedTranscoderServiceServer
 // for forward compatibility.
 type TranscoderServiceServer interface {
-	TranscodeVideo(*TranscodeRequest, grpc.ServerStreamingServer[TranscodeProgress]) error
+	TranscodeVideo(*TranscodeVideoRequest, grpc.ServerStreamingServer[TranscodeVideoResponse]) error
 	mustEmbedUnimplementedTranscoderServiceServer()
 }
 
@@ -71,7 +71,7 @@ type TranscoderServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedTranscoderServiceServer struct{}
 
-func (UnimplementedTranscoderServiceServer) TranscodeVideo(*TranscodeRequest, grpc.ServerStreamingServer[TranscodeProgress]) error {
+func (UnimplementedTranscoderServiceServer) TranscodeVideo(*TranscodeVideoRequest, grpc.ServerStreamingServer[TranscodeVideoResponse]) error {
 	return status.Error(codes.Unimplemented, "method TranscodeVideo not implemented")
 }
 func (UnimplementedTranscoderServiceServer) mustEmbedUnimplementedTranscoderServiceServer() {}
@@ -96,15 +96,15 @@ func RegisterTranscoderServiceServer(s grpc.ServiceRegistrar, srv TranscoderServ
 }
 
 func _TranscoderService_TranscodeVideo_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TranscodeRequest)
+	m := new(TranscodeVideoRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(TranscoderServiceServer).TranscodeVideo(m, &grpc.GenericServerStream[TranscodeRequest, TranscodeProgress]{ServerStream: stream})
+	return srv.(TranscoderServiceServer).TranscodeVideo(m, &grpc.GenericServerStream[TranscodeVideoRequest, TranscodeVideoResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type TranscoderService_TranscodeVideoServer = grpc.ServerStreamingServer[TranscodeProgress]
+type TranscoderService_TranscodeVideoServer = grpc.ServerStreamingServer[TranscodeVideoResponse]
 
 // TranscoderService_ServiceDesc is the grpc.ServiceDesc for TranscoderService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -120,5 +120,5 @@ var TranscoderService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "transcoder.proto",
+	Metadata: "transcoder/v1/transcoder.proto",
 }

@@ -32,33 +32,54 @@ func run(addr string) error {
 	}
 
 	srv := grpc.NewServer()
-	pb.RegisterTranscoderServiceServer(srv, transcoder.NewTranscoderServer())
+	logger := slog.Default()
+	worker := transcoder.NewWorkers(10, logger)
+	transcoderServer := transcoder.NewTranscoderServer(worker, logger)
+	pb.RegisterTranscoderServiceServer(srv, transcoderServer)
 	reflection.Register(srv)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	workerCtx, cancelWorkers := context.WithCancel(context.Background())
+	defer cancelWorkers()
+	worker.Start(workerCtx)
+
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("transcoder gRPC server listening", "addr", lis.Addr().String())
 		errCh <- srv.Serve(lis)
 	}()
-
+	var serveErr error
 	select {
-	case err := <-errCh:
-		return err
+	case serveErr = <-errCh:
 	case <-ctx.Done():
 		slog.Info("shutting down")
-		stopped := make(chan struct{})
-		go func() {
-			srv.GracefulStop()
-			close(stopped)
-		}()
-		select {
-		case <-stopped:
-		case <-time.After(10 * time.Second):
-			srv.Stop()
-		}
-		return nil
 	}
+
+	stopped := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		srv.Stop()
+		<-stopped
+	}
+
+	cancelWorkers()
+
+	done := make(chan struct{})
+	go func() {
+		worker.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+		slog.Info("all workers stopped")
+	case <-time.After(15 * time.Second):
+		slog.Warn("wrokers did not finish in time, exiting anyway")
+	}
+	return serveErr
 }

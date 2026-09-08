@@ -31,17 +31,6 @@ func run(addr string) error {
 		log.Fatalf("failed to dial: %v", err)
 	}
 	defer conn.Close()
-	// client := pb.NewTranscoderServiceClient(conn)
-	// resp, err := client.TranscodeVideo(context.Background(), &pb.TranscodeRequest{
-	// 	FileId:            "123",
-	// 	SourceFilePath:    "123",
-	// 	OutputDirectory:   "123",
-	// 	TargetResolutions: []string{"123", "123", "123"},
-	// })
-	// if err != nil {
-	// 	return err
-	// }
-
 	watchDogFolder := config.GetEnvString("WATCHDOG_FOLDER", "./watch")
 	watchDogDelay := config.GetEnvString("WATCHDOG_DELAY", "5s")
 	delay, err := time.ParseDuration(watchDogDelay)
