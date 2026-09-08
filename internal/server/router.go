@@ -1,9 +1,11 @@
 package server
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 
+	"github.com/crimsonn/media_pipeline/internal/api/transcoder"
 	"github.com/crimsonn/media_pipeline/internal/config"
 	"github.com/crimsonn/media_pipeline/internal/middleware"
 	"github.com/crimsonn/media_pipeline/pkg/pb"
@@ -17,6 +19,8 @@ func SetupRouter(
 	config *config.Config,
 	transcoderService pb.TranscoderServiceClient,
 	healthService healthpb.HealthClient,
+	db *sql.DB,
+	transcoderHandler *transcoder.Handler,
 ) *gin.Engine {
 	router := gin.New()
 	if config.Environment == "development" {

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
+	"github.com/crimsonn/media_pipeline/internal/watcher"
 	"github.com/crimsonn/media_pipeline/pkg/pb"
-	"github.com/crimsonn/media_pipeline/services/watchdog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -41,6 +41,6 @@ func run(addr string) error {
 	numWorkers := config.GetEnvInt("NUM_WORKERS", 10)
 	queueCapacity := config.GetEnvInt("QUEUE_CAPACITY", 100)
 	transcoder := pb.NewTranscoderServiceClient(conn)
-	orchestrator := watchdog.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, outputDirectory, transcoder)
+	orchestrator := watcher.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, outputDirectory, transcoder)
 	return orchestrator.Start()
 }

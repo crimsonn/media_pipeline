@@ -1,4 +1,4 @@
-package transcoder
+package grpc
 
 import (
 	"log/slog"
@@ -7,31 +7,36 @@ import (
 	"path/filepath"
 	"strings"
 
-	pb "github.com/crimsonn/media_pipeline/pkg/pb"
+	"github.com/crimsonn/media_pipeline/internal/domain"
+	"github.com/crimsonn/media_pipeline/internal/transcoder"
+	"github.com/crimsonn/media_pipeline/pkg/pb"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/status"
 )
 
 type Done struct {
-	taskId uuid.UUID
-	state  TaskState
-	error  error
+	TaskID uuid.UUID
+	State  domain.TaskState
+	Error  error
 }
 
-type Server struct {
+type TranscoderGRPCServer struct {
 	pb.UnimplementedTranscoderServiceServer
-	worker *Worker
+	worker *transcoder.Worker
 	logger *slog.Logger
 }
 
-func NewTranscoderServer(worker *Worker, logger *slog.Logger) *Server {
-	return &Server{
+func NewTranscoderGRPCServer(
+	worker *transcoder.Worker,
+	logger *slog.Logger,
+) *TranscoderGRPCServer {
+	return &TranscoderGRPCServer{
 		worker: worker,
 		logger: logger,
 	}
 }
 
-func (s *Server) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.TranscoderService_TranscodeVideoServer) error {
+func (s *TranscoderGRPCServer) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.TranscoderService_TranscodeVideoServer) error {
 	ctx := stream.Context()
 	s.logger.Info("received transcode video request", "file_id", req.FileId)
 	if len(req.Resolutions) == 0 {
@@ -51,26 +56,26 @@ func (s *Server) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.Transco
 		})
 	}
 
-	backLog := make(chan *Task, len(req.Resolutions))
+	backLog := make(chan *domain.Task, len(req.Resolutions))
 
 	filenameWithoutExtension := parts[0]
-	renditions := []Rendition{}
+	renditions := []domain.Rendition{}
 	for _, resolution := range req.Resolutions {
-		rendition := Rendition{
-			Name:     resolution.Name,
-			Width:    int(resolution.Width),
-			Height:   int(resolution.Height),
-			VideoBps: int(resolution.VideoBps),
-			AudioBps: int(resolution.AudioBps),
+		rendition := domain.Rendition{
+			Name:         resolution.Name,
+			Width:        int(resolution.Width),
+			Height:       int(resolution.Height),
+			VideoBitrate: int(resolution.VideoBps),
+			AudioBitrate: int(resolution.AudioBps),
 		}
 		renditions = append(renditions, rendition)
-		task := &Task{
-			id:              uuid.New(),
-			sourceFile:      req.SourceFilePath,
-			filePath:        path.Join(req.OutputDirectory, filenameWithoutExtension, resolution.Name),
-			outputDirectory: req.OutputDirectory,
-			rendition:       rendition,
-			backLog:         backLog,
+		task := &domain.Task{
+			ID:              uuid.New(),
+			SourceFile:      req.SourceFilePath,
+			FilePath:        path.Join(req.OutputDirectory, filenameWithoutExtension, resolution.Name),
+			OutputDirectory: req.OutputDirectory,
+			Rendition:       rendition,
+			BackLog:         backLog,
 		}
 		s.worker.SubmitTask(ctx, task)
 	}
@@ -79,17 +84,17 @@ func (s *Server) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.Transco
 	for len(done) < len(req.Resolutions) {
 		select {
 		case l := <-backLog:
-			if _, ok := done[l.id.String()]; ok {
+			if _, ok := done[l.ID.String()]; ok {
 				continue
 			}
-			done[l.id.String()] = Done{taskId: l.id, state: l.state, error: l.error}
+			done[l.ID.String()] = Done{TaskID: l.ID, State: l.State, Error: l.Error}
 		case <-ctx.Done():
 			return status.FromContextError(ctx.Err()).Err()
 		}
 	}
 	someFailed := false
 	for _, d := range done {
-		if d.state == TaskStateError {
+		if d.State == domain.TaskStateError {
 			someFailed = true
 			break
 		}
@@ -97,8 +102,8 @@ func (s *Server) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.Transco
 	if someFailed {
 		failed := []string{}
 		for _, d := range done {
-			if d.state == TaskStateError {
-				failed = append(failed, d.error.Error())
+			if d.State == domain.TaskStateError {
+				failed = append(failed, d.Error.Error())
 			}
 		}
 		return stream.Send(&pb.TranscodeVideoResponse{
@@ -108,7 +113,7 @@ func (s *Server) TranscodeVideo(req *pb.TranscodeVideoRequest, stream pb.Transco
 		})
 	}
 
-	writeMaster(filepath.Join(req.OutputDirectory, filenameWithoutExtension), renditions)
+	transcoder.WriteMaster(filepath.Join(req.OutputDirectory, filenameWithoutExtension), renditions)
 
 	if err := os.Remove(req.SourceFilePath); err != nil {
 		return stream.Send(&pb.TranscodeVideoResponse{

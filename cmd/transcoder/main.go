@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
+	"github.com/crimsonn/media_pipeline/internal/transcoder"
+	transcoderGrpc "github.com/crimsonn/media_pipeline/internal/transport/grpc"
 	"github.com/crimsonn/media_pipeline/pkg/pb"
-	"github.com/crimsonn/media_pipeline/services/transcoder"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -38,8 +39,8 @@ func run(addr string) error {
 
 	logger := slog.Default()
 	worker := transcoder.NewWorkers(10, logger)
-	transcoderServer := transcoder.NewTranscoderServer(worker, logger)
-	pb.RegisterTranscoderServiceServer(srv, transcoderServer)
+	transcoderGrpcServer := transcoderGrpc.NewTranscoderGRPCServer(worker, logger)
+	pb.RegisterTranscoderServiceServer(srv, transcoderGrpcServer)
 
 	healthServ.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

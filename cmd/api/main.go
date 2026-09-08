@@ -9,7 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crimsonn/media_pipeline/internal/api/transcoder"
 	"github.com/crimsonn/media_pipeline/internal/config"
+	"github.com/crimsonn/media_pipeline/internal/db"
+	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/server"
 	"github.com/crimsonn/media_pipeline/pkg/pb"
 	"google.golang.org/grpc"
@@ -29,9 +32,26 @@ func main() {
 		os.Exit(1)
 	}
 	defer conn.Close()
-	transcoder := pb.NewTranscoderServiceClient(conn)
+	trClient := pb.NewTranscoderServiceClient(conn)
 	healthClient := healthpb.NewHealthClient(conn)
-	router := server.SetupRouter(logger, config, transcoder, healthClient)
+	database, err := db.OpenDatabase()
+	if err != nil {
+		logger.Error("Failed to open database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	q := queries.New(database)
+	transcoderService := transcoder.NewService(q)
+	transcoderHandler := transcoder.NewHandler(transcoderService)
+	router := server.SetupRouter(
+		logger,
+		config,
+		trClient,
+		healthClient,
+		database,
+		transcoderHandler,
+	)
 	srv := &http.Server{
 		Addr:    config.APIAddr + ":" + config.APIPort,
 		Handler: router,

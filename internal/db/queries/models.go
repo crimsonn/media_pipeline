@@ -8,8 +8,30 @@ import (
 	"database/sql"
 )
 
-type Author struct {
-	ID   int64
-	Name string
-	Bio  sql.NullString
+type ProfileRendition struct {
+	ProfileID   sql.NullInt64
+	RenditionID sql.NullInt64
+	StreamIndex int64
+}
+
+type Rendition struct {
+	ID           int64
+	Name         string
+	Width        int64
+	Height       int64
+	VideoBitrate int64
+	AudioBitrate int64
+	VideoCodec   sql.NullString
+	AudioCodec   sql.NullString
+	Fps          sql.NullInt64
+	CreatedAt    interface{}
+}
+
+type TranscodeProfile struct {
+	ID             int64
+	Name           string
+	Description    sql.NullString
+	HlsSegmentTime sql.NullInt64
+	IsDefault      sql.NullBool
+	CreatedAt      interface{}
 }
