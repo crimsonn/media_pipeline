@@ -2,84 +2,54 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
-	"github.com/crimsonn/media_pipeline/pkg/pb"
-	"github.com/crimsonn/media_pipeline/services/transcoder"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/reflection"
+	"github.com/crimsonn/media_pipeline/internal/db"
+	"github.com/crimsonn/media_pipeline/internal/db/queries"
+	"github.com/crimsonn/media_pipeline/internal/transcoder"
 )
 
 func main() {
-	addr := config.GetEnvString("TRANSCODER_ADDR", ":50051")
-	if err := run(addr); err != nil {
-		slog.Error("transcoder failed", "err", err)
+	logger := slog.Default()
+	config := config.LoadConfig()
+
+	database, err := db.OpenDatabase(context.Background(), config.DatabaseURL)
+	if err != nil {
+		logger.Error("open database", "err", err)
 		os.Exit(1)
 	}
-}
 
-func run(addr string) error {
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr, err)
-	}
-
-	srv := grpc.NewServer()
-	logger := slog.Default()
-	worker := transcoder.NewWorkers(10, logger)
-	transcoderServer := transcoder.NewTranscoderServer(worker, logger)
-	pb.RegisterTranscoderServiceServer(srv, transcoderServer)
-	reflection.Register(srv)
+	q := queries.New(database)
+	numWorkers := config.TranscoderWorkers
+	worker := transcoder.NewWorkers(numWorkers, logger, q)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	workerCtx, cancelWorkers := context.WithCancel(context.Background())
-	defer cancelWorkers()
-	worker.Start(workerCtx)
+	worker.Start(ctx)
+	logger.Info("transcoder workers started", "count", numWorkers)
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.Serve(lis)
-	}()
-	var serveErr error
-	select {
-	case serveErr = <-errCh:
-	case <-ctx.Done():
-		slog.Info("shutting down")
-	}
+	<-ctx.Done()
+	logger.Info("shutdown signal received, initiating graceful shutdown...")
 
-	stopped := make(chan struct{})
-	go func() {
-		srv.GracefulStop()
-		close(stopped)
-	}()
-	select {
-	case <-stopped:
-	case <-time.After(10 * time.Second):
-		srv.Stop()
-		<-stopped
-	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelShutdown()
 
-	cancelWorkers()
-
-	done := make(chan struct{})
+	shutdownDone := make(chan struct{})
 	go func() {
 		worker.Stop()
-		close(done)
+		close(shutdownDone)
 	}()
+
 	select {
-	case <-done:
-		slog.Info("all workers stopped")
-	case <-time.After(15 * time.Second):
-		slog.Warn("wrokers did not finish in time, exiting anyway")
+	case <-shutdownDone:
+		logger.Info("all workers stopped gracefully")
+	case <-shutdownCtx.Done():
+		logger.Warn("workers did not finish in time, forcing exit")
 	}
-	return serveErr
 }

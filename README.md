@@ -1,10 +1,12 @@
 # media pipeline
 
-A small local lab for learning **ffmpeg** and a **watch-folder → transcode → HLS** pipeline.
+A local lab for learning **ffmpeg**, **HLS**, and a **watch-folder → database queue → worker** transcode pipeline.
 
-Drop a video into `watch/`. A watchdog notices it, waits until the file stops growing, then asks a gRPC transcoder to encode multiple renditions with ffmpeg. The result is an HLS VOD package under `done/`.
+Drop a video into `watch/`. A watcher waits until the file stops growing, then records it as pending. You pick a **transcode profile** in the UI. Postgres holds the job (and one task per rendition). Transcoder workers claim those tasks and run ffmpeg. HLS lands under `done/`.
 
 This is not a production encoder. It is a playground for how adaptive bitrate streaming is assembled.
+
+gRPC is gone. Services do not call each other. They share **PostgreSQL**.
 
 ## What you get
 
@@ -12,197 +14,221 @@ This is not a production encoder. It is a playground for how adaptive bitrate st
 watch/clip.mp4
         │
         ▼
-   watchdog (polls folder)
-        │  gRPC TranscodeVideo
+   watcher (polls folder, waits until mtime is stable)
+        │  INSERT pending_files
         ▼
-   transcoder (worker pool)
-        │  one ffmpeg process per rendition
+   UI / API  — assign a transcode profile
+        │  INSERT jobs + job_tasks (one row per rendition)
+        ▼
+   Postgres  — the queue
+        │  ClaimJobTask (FOR UPDATE SKIP LOCKED)
+        ▼
+   transcoder workers  — one ffmpeg process per claimed task
         ▼
 done/clip/
-  master.m3u8          ← player entry point (picks 1080p or 720p)
-  1080p/manifest.m3u8  ← 6s MPEG-TS segments
+  master.m3u8          ← player entry point
+  1080p/manifest.m3u8  ← ~6s MPEG-TS segments (duration comes from the profile)
   720p/manifest.m3u8
 ```
 
-Default renditions (hardcoded in the watchdog):
-
-| name  | size      | video bitrate | audio bitrate |
-|-------|-----------|---------------|---------------|
-| 1080p | 1920×1080 | 5 Mbps        | 128 kbps AAC  |
-| 720p  | 1280×720  | 2 Mbps        | 128 kbps AAC  |
+Renditions and ladders are not hardcoded. You create **renditions** (size, bitrates, codecs) and group them into **profiles** (named ladder + HLS segment time). The watcher only discovers files; encoding starts when a profile is assigned.
 
 After a successful job the source file is **deleted** from `watch/`.
 
 ## How the pipeline works
 
-Two processes, one gRPC contract (`TranscoderService.TranscodeVideo` in `api/proto/transcoder/v1/transcoder.proto`).
+Four processes plus Postgres.
 
-### 1. Watchdog — ingest
+### 1. Watcher — ingest
 
-`cmd/watchdog` polls `WATCHDOG_FOLDER` (default `./watch`) every few seconds.
+`cmd/watcher` polls `WATCH_DIRECTORY` (default `./watch`).
 
-- New filenames are queued (capacity `QUEUE_CAPACITY`).
-- A worker watches `mtime`. If the file has not changed for two consecutive checks, it is treated as fully written (so a copy-in-progress is not transcoded).
-- It then opens a streaming RPC to the transcoder with the source path, output dir (`WATCHDOG_OUTPUT`, default `./done`), and the rendition list.
+- New filenames go on an in-process queue (`NUM_WORKERS`, `QUEUE_CAPACITY`).
+- A worker watches `mtime`. After two consecutive checks with no change, the file is treated as fully written.
+- It inserts a `pending_files` row (`status = waiting`). It does **not** start ffmpeg.
 
-### 2. Transcoder — encode
+### 2. API + UI — profiles and enqueue
 
-`cmd/transcoder` listens on `TRANSCODER_ADDR` (default `:50051`).
+`cmd/api` is a Gin server (`API_ADDR`:`API_PORT`, default `localhost:8080`).
 
-- Each requested resolution becomes a `Task` on a worker pool.
-- A worker creates `done/<name>/<rendition>/` and runs ffmpeg.
-- When every rendition finishes, it writes `master.m3u8` and removes the source file.
-- Progress/result is sent back on the gRPC stream (`IN_PROGRESS` / `COMPLETED` / `FAILED`).
+The TanStack UI in `web/` (dev server on port 3000) talks to `/api/v1`:
 
-Workers are independent, so 1080p and 720p encode in parallel (subject to CPU).
+| | |
+|---|---|
+| Renditions | `GET/POST /transcoder/renditions`, `DELETE /transcoder/renditions/:id` |
+| Profiles | `GET/POST /transcoder/profiles`, `GET /transcoder/profiles/:id` |
+| Pending | `GET /pending/files`, `POST /pending/files` (assign profile, enqueue) |
+| Jobs | `GET /jobs/latest` |
+| Playback | `GET /playback/outputs`, `GET /playback/hls/*` |
+
+`POST /pending/files` calls `EnqueueTranscode`: one `jobs` row plus one `job_tasks` row per rendition on that profile.
+
+### 3. Postgres — queue and source of truth
+
+Schema lives in `internal/db/schema.sql` (applied on process startup and by Compose init). sqlc generates Go from `internal/db/queries/*.sql`.
+
+| table | role |
+|-------|------|
+| `renditions` | reusable encode settings (name, WxH, bitrates, codecs, fps) |
+| `transcode_profiles` | named ladder + `hls_segment_time` |
+| `profile_renditions` | which renditions belong to a profile, and order |
+| `pending_files` | files the watcher saw, waiting for a profile |
+| `jobs` | one transcode of one file with a profile (`pending` / `running` / `completed` / `failed`) |
+| `job_tasks` | one ffmpeg run per rendition; this is the work queue |
+
+Workers claim work with `FOR UPDATE SKIP LOCKED` so two processes cannot take the same task.
+
+### 4. Transcoder — encode
+
+`cmd/transcoder` is a worker pool (`TRANSCODER_WORKERS`, default 10). Every ~2s each worker tries `ClaimJobTask`. On a hit it:
+
+- marks the parent job `running`
+- creates `done/<stem>/<rendition>/`
+- runs ffmpeg
+- marks the task completed or failed
+- when every task on the job is done: writes `master.m3u8`, marks the job completed, deletes the source
+
+Workers are independent, so renditions on the same job encode in parallel (subject to CPU).
 
 ## What ffmpeg is doing
 
-Each worker runs roughly this (see `renditionArgs` in `services/transcoder/workers.go`):
+Each claimed task runs roughly this (see `renditionArgs` in `internal/transcoder/worker.go`). Bitrate values on the rendition are passed as kilobits (`5000` → `-b:v 5000k`). Segment length comes from the profile.
 
 ```text
-ffmpeg -i source.mp4
+ffmpeg -threads 2 -i source.mp4
   -map 0:v:0
   -vf scale=w=1920:h=1080
   -c:v libx264 -profile:v high -level 4.0 -preset veryfast
-  -b:v 5000000 -maxrate 5500000 -bufsize 10000000
+  -b:v 5000k -maxrate 5500k -bufsize 10000k
   -force_key_frames expr:gte(t,n_forced*6) -sc_threshold 0
-  -map 0:a:0? -c:a aac -b:a 128000 -ac 2
+  -map 0:a:0? -c:a aac -b:a 128k -ac 2
   -f hls -hls_time 6 -hls_playlist_type vod -hls_flags independent_segments
   -hls_segment_filename .../seg_%05d.ts
   .../manifest.m3u8
 ```
-
-Useful pieces:
 
 | flag | why it is here |
 |------|----------------|
 | `-vf scale=` | resize this rendition |
 | `libx264` + `veryfast` | H.264 encode, faster preset for a local test |
 | `-b:v` / `-maxrate` / `-bufsize` | CBR-ish ABR ladder (maxrate ~110% of target, 2s VBV buffer) |
-| `-force_key_frames` every 6s | GOP aligned to segment length so a player can switch renditions at segment boundaries |
+| `-force_key_frames` every N seconds | GOP aligned to segment length so a player can switch renditions at segment boundaries |
 | `-sc_threshold 0` | no extra scene-cut keyframes (keeps GOPs regular) |
 | `-map 0:a:0?` | take first audio if it exists (`?` = optional) |
-| `-f hls` + `-hls_time 6` | MPEG-TS segments of ~6 seconds |
+| `-f hls` + `-hls_time` | MPEG-TS segments |
 | `-hls_playlist_type vod` | finite playlist with `#EXT-X-ENDLIST` |
 | `independent_segments` | each `.ts` starts on a keyframe |
 
-The **master playlist** is written in Go, not by ffmpeg. It lists each variant with bandwidth, resolution, and codecs so a player can pick a ladder step:
+The **master playlist** is written in Go (`internal/transcoder/master.go`), not by ffmpeg:
 
 ```text
 #EXTM3U
 #EXT-X-VERSION:6
 #EXT-X-INDEPENDENT-SEGMENTS
-#EXT-X-STREAM-INF:BANDWIDTH=5128000,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2"
+#EXT-X-STREAM-INF:BANDWIDTH=...,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2"
 1080p/manifest.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=2128000,RESOLUTION=1280x720,CODECS="avc1.640028,mp4a.40.2"
-720p/manifest.m3u8
 ```
 
-Play `done/<name>/master.m3u8` in anything that speaks HLS (VLC, ffplay, a browser with hls.js).
+Play via the UI (hls.js) or open `done/<name>/master.m3u8` in VLC / ffplay.
 
 ## Layout
 
 ```text
-cmd/transcoder/          gRPC server entrypoint
-cmd/watchdog/            folder watcher + gRPC client
-services/transcoder/     ffmpeg workers + TranscodeVideo handler
-services/watchdog/       poll loop, stability checks, RPC
-api/proto/transcoder/v1/ TranscoderService protobuf
-pkg/pb/                  generated Go stubs
-internal/config/         env helpers (defaults if unset)
+cmd/watcher/             folder poller → pending_files
+cmd/transcoder/          Postgres-backed ffmpeg workers
+cmd/api/                 Gin HTTP API
+internal/watcher/        stability checks, pending insert
+internal/transcoder/     claim loop, ffmpeg, master playlist
+internal/api/            handlers: transcoder, pending, jobs, playback
+internal/db/             pool, schema apply, enqueue transaction
+internal/db/schema.sql   tables
+internal/db/queries/     sqlc SQL + generated Go
+internal/server/         Gin router
+internal/config/         env
+web/                     TanStack UI (renditions, profiles, pending, jobs, playback)
+Dockerfile               Go images: watcher, api, transcoder
+web/Dockerfile           TanStack UI
+docker-compose.yml       postgres, watcher, api, transcoder, web
 watch/                   drop source files here (gitignored)
 done/                    HLS output (gitignored)
-Dockerfile               multi-stage build (watchdog + transcoder)
-docker-compose.yml       shared watch/done volumes
 ```
 
 ## Prerequisites
 
 - Go (see `go.mod`)
 - [ffmpeg](https://ffmpeg.org/) on `PATH` (with `libx264`)
-- `protoc`, `protoc-gen-go`, and `protoc-gen-go-grpc` only if you change the `.proto`
+- PostgreSQL 17 (Compose is enough)
+- [Bun](https://bun.sh/) (or Node) for `web/`
+- `sqlc` only if you change SQL (`make tools` then `make sqlc`)
+
+Processes read the **environment**, not `.env` automatically. Export vars or use a runner that injects them. Copy `.env.example` as a reminder.
 
 ## Run
 
-```bash
-mkdir -p watch done
-
-# terminal 1
-go run ./cmd/transcoder
-
-# terminal 2
-go run ./cmd/watchdog
-
-# then copy a file in
-cp /path/to/clip.mp4 watch/
-```
-
-Wait until the watchdog decides the file is stable, then check `done/<basename>/master.m3u8`.
-
-### Docker
-
-You do **not** copy files into the container. `./watch` on your machine is bind-mounted into both services at `/data/watch`, and `./done` at `/data/done`. The watchdog only sees whatever you drop on the host.
+### Docker (full stack)
 
 ```bash
 mkdir -p watch done
 docker compose up --build
-cp /path/to/clip.mp4 watch/
 ```
 
-HLS shows up in `./done/<basename>/` on the host (play `master.m3u8` with VLC). After a successful job the file is removed from `watch/`.
+Then open [http://localhost:3000](http://localhost:3000). API is on port 8080, Postgres on 5432.
 
-Both containers share those folders because the transcoder runs ffmpeg on the **path the watchdog sends** (`/data/watch/clip.mp4`). If the mounts did not match, ffmpeg would look for a file that only exists in the other container.
+Drop files on the **host** into `./watch` (bind-mounted into watcher, api, and transcoder at `/data/watch`). HLS appears in `./done`.
 
-Config is read from the process environment (`internal/config`). Defaults match a local run; copy `.env.example` if you want a reminder of the knobs. Docker Compose sets its own env in `docker-compose.yml`.
+`VITE_API_URL` is built as `http://localhost:8080/api/v1` because the browser is the client, not the `web` container.
+
+### Local (UI / Go on the host)
+
+```bash
+mkdir -p watch done
+docker compose up -d postgres
+
+# from repo root, with DATABASE_URL (and the rest) in the environment
+make run-watcher
+make run-transcoder
+make run-api
+
+cd web && bun install && bun run dev   # http://localhost:3000
+```
+
+`make run-all` builds `bin/` and starts watcher, transcoder, and api together via goreman (`Procfile`).
+
+Then:
+
+1. Create renditions and a profile in the UI.
+2. Copy a file into `watch/`.
+3. When it appears under **Pending files**, assign the profile.
+4. Watch **Home** for job/task status; play the result under **Playback**.
+
+### Config
 
 | variable | default | used by |
 |----------|---------|---------|
-| `TRANSCODER_ADDR` | `:50051` | both (watchdog dials `transcoder:50051` in Compose) |
-| `WATCHDOG_FOLDER` | `./watch` | watchdog (`/data/watch` in Compose) |
-| `WATCHDOG_OUTPUT` | `./done` | watchdog (`/data/done` in Compose) |
-| `WATCHDOG_DELAY` | `5s` | parsed at startup |
-| `NUM_WORKERS` | `10` | watchdog queue workers |
-| `QUEUE_CAPACITY` | `100` | watchdog task channel |
-| `TRANSCODER_WORKERS` | (example only) | not wired yet; transcoder currently uses 10 workers in code |
-
-Regenerate protobufs after editing the API:
-
-```bash
-make proto
-```
+| `DATABASE_URL` | `postgres://media:media@localhost:5432/media_pipeline?sslmode=disable` | all Go services |
+| `API_ADDR` / `API_PORT` | `localhost` / `8080` | api |
+| `ENVIRONMENT` | `development` | api (Gin mode, CORS) |
+| `TRANSCODER_WORKERS` | `10` | transcoder |
+| `WATCH_DIRECTORY` | `./watch` | watcher, api (enqueue path) |
+| `OUTPUT_DIRECTORY` | `./done` | watcher, api, playback, jobs |
+| `POLLING_INTERVAL` | `5s` | parsed at startup |
+| `NUM_WORKERS` / `QUEUE_CAPACITY` | `10` / `100` | watcher in-process queue |
+| `VITE_API_URL` | `http://localhost:8080/api/v1` | web (`web/.env`) |
 
 ## Notes while learning
 
 - One **input**, N **ffmpeg processes**, one **master playlist** is the usual ABR pattern.
 - Segment duration and keyframe interval should match; otherwise HLS switches can glitch.
-- The watchdog’s “file stopped changing” check is a simple substitute for a real upload-complete signal.
+- Postgres + `SKIP LOCKED` is a small stand-in for a dedicated queue (Redis, SQS, NATS).
+- The watcher’s “file stopped changing” check is a substitute for a real upload-complete signal.
 - Source deletion on success is convenient for a lab and dangerous if you still need the original.
 
 ## Next steps
 
-This file is also a progress log. The pipeline already accepts a list of renditions on `TranscodeVideoRequest`; the watchdog just hardcodes 1080p + 720p in `services/watchdog/orchestrator.go`. Next is to treat that list as a **named profile** you edit in a UI and persist, instead of a literal in code.
+This file is a progress log. Profiles, the UI, Postgres-as-queue, in-browser HLS, and Compose (including `web`) are in. Still open:
 
-### Encoding profiles
-
-A profile is a reusable ABR ladder: name + ordered renditions (`name`, `width`, `height`, `video_bps`, `audio_bps` — same fields as `TranscodeResolution`). Examples: `web-default`, `mobile`, `archive-1080`.
-
-- Store profiles in a database (SQLite is enough for a local lab; Postgres if you want it in Compose).
-- Watchdog (or a small API in front of it) loads a profile by id and passes `resolutions` through gRPC. ffmpeg does not change; only where the ladder comes from does.
-- Keep one “default” profile so drop-in-`watch/` still works without clicking through the UI.
-
-### UI
-
-A simple app to:
-
-- CRUD profiles and their renditions (add 480p, drop 1080p, tweak bitrates).
-- See jobs: file in, profile used, state, link to `done/<name>/master.m3u8`.
-- Optionally pick a profile per job, or set which profile the watchdog applies to new files.
-
-The UI talks to an HTTP API; the transcoder stays gRPC + ffmpeg.
-
-### Later (when the above works)
-
-- Wire `TRANSCODER_WORKERS` and real ffmpeg `%` progress on the stream.
-- Play HLS in the browser (hls.js) instead of only VLC.
+- Wire `POLLING_INTERVAL` into the watcher tickers (they are still 5s in code).
+- Optional default profile so a drop in `watch/` can enqueue without the UI.
 - Stop deleting the source until you choose to; keep originals under `watch/` or an archive folder.
+
+The `web/` UI (routes, API client, profiles, pending enqueue, job feed, HLS playback) was fully wired by Claude.
