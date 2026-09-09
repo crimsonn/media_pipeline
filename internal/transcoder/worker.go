@@ -8,45 +8,87 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/domain"
+	"github.com/crimsonn/media_pipeline/internal/utils"
 	"github.com/jackc/pgx/v5"
 )
 
+type WorkerState int
+
+const (
+	WorkerStateIdle WorkerState = iota
+	WorkerStateActive
+)
+
 type Worker struct {
-	numWorkers int
-	wg         sync.WaitGroup
-	logger     *slog.Logger
-	queries    *queries.Queries
+	id                string
+	status            WorkerState
+	logger            *slog.Logger
+	queries           *queries.Queries
+	heartbeat         chan struct{}
+	heartbeatResponse chan string
+	stop              chan struct{}
 }
 
-func NewWorkers(numWorkers int, logger *slog.Logger, q *queries.Queries) *Worker {
+func NewWorker(
+	id string,
+	logger *slog.Logger,
+	queries *queries.Queries,
+	heartbeat chan struct{},
+	heartbeatResponse chan string,
+	stop chan struct{},
+) *Worker {
 	return &Worker{
-		numWorkers: numWorkers,
-		logger:     logger,
-		queries:    q,
+		id:                id,
+		status:            WorkerStateIdle,
+		logger:            logger,
+		queries:           queries,
+		heartbeat:         heartbeat,
+		heartbeatResponse: heartbeatResponse,
+		stop:              stop,
 	}
 }
 
 func (w *Worker) Start(ctx context.Context) {
-	for i := 1; i <= w.numWorkers; i++ {
-		w.wg.Add(1)
-		go w.worker(ctx, i)
+	w.logger.Info("worker", "id", w.id, "started", true)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-w.stop:
+				return
+			case <-w.heartbeat:
+				select {
+				case w.heartbeatResponse <- w.id:
+				case <-ctx.Done():
+					return
+				case <-w.stop:
+					return
+				}
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+	case <-w.stop:
 	}
+	w.logger.Info("worker", "id", w.id, "stopped", true)
 }
 
-func (w *Worker) worker(ctx context.Context, id int) {
-	defer w.wg.Done()
+func (w *Worker) StartProcessing(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			w.logger.Info("Received a stop signal")
+			return
+		case <-w.stop:
+			w.logger.Info("Shutting down worker", "id=", w.id)
 			return
 		case <-ticker.C:
 			task, err := w.queries.ClaimJobTask(ctx)
@@ -54,15 +96,15 @@ func (w *Worker) worker(ctx context.Context, id int) {
 				if errors.Is(err, pgx.ErrNoRows) {
 					continue
 				}
-				w.logger.Error("failed to claim job task", "worker", id, "error", err)
+				w.logger.Error("failed to claim job task", "worker", w.id, "error", err)
 				continue
 			}
-			w.processTask(ctx, id, task)
+			w.processTask(ctx, w.id, task)
 		}
 	}
 }
 
-func (w *Worker) processTask(ctx context.Context, workerID int, task queries.ClaimJobTaskRow) {
+func (w *Worker) processTask(ctx context.Context, workerID string, task queries.ClaimJobTaskRow) {
 	fail := func(msg string) {
 		if err := w.queries.FailJobTask(ctx, queries.FailJobTaskParams{
 			ID:           task.TaskID,
@@ -70,29 +112,28 @@ func (w *Worker) processTask(ctx context.Context, workerID int, task queries.Cla
 		}); err != nil {
 			w.logger.Error("failed to mark task failed", "task", task.TaskID, "error", err)
 		}
-		if err := w.maybeFinalizeJob(ctx, task); err != nil {
+		if err := w.finalizeJob(ctx, task); err != nil {
 			w.logger.Error("failed to finalize job", "job", task.JobID, "error", err)
 		}
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			fail(fmt.Sprintf("worker %d panicked: %v", workerID, r))
+			fail(fmt.Sprintf("worker %s panicked: %v", workerID, r))
 		}
 	}()
 
 	if err := w.queries.MarkJobRunning(ctx, task.JobID); err != nil {
-		w.logger.Error("failed to mark job running", "job", task.JobID, "error", err)
+		fail(fmt.Sprintf("mark job running: %v", err))
 	}
-
-	stem := fileTrimSuffix(task.FileName)
+	stem := utils.FileTrimSuffix(task.FileName)
 	variantDir := filepath.Join(task.OutputDir, stem, task.RenditionName)
 	if err := os.MkdirAll(variantDir, 0o755); err != nil {
-		fail(fmt.Sprintf("create variant directory: %v", err))
+		fail(fmt.Sprintf("failed to create variant directory: %v", err))
 		return
 	}
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", renditionArgs(task.SourcePath, variantDir, int(task.HlsSegmentTime), task)...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", utils.RenditionArgs(task.SourcePath, variantDir, int(task.HlsSegmentTime), task)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -102,16 +143,15 @@ func (w *Worker) processTask(ctx context.Context, workerID int, task queries.Cla
 
 	if err := w.queries.CompleteJobTask(ctx, task.TaskID); err != nil {
 		w.logger.Error("failed to complete task", "task", task.TaskID, "error", err)
-		fail(fmt.Sprintf("complete task: %v", err))
 		return
 	}
 
-	if err := w.maybeFinalizeJob(ctx, task); err != nil {
+	if err := w.finalizeJob(ctx, task); err != nil {
 		w.logger.Error("failed to finalize job", "job", task.JobID, "error", err)
 	}
 }
 
-func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTaskRow) error {
+func (w *Worker) finalizeJob(ctx context.Context, task queries.ClaimJobTaskRow) error {
 	stats, err := w.queries.JobTaskStats(ctx, task.JobID)
 	if err != nil {
 		return fmt.Errorf("task stats: %w", err)
@@ -132,6 +172,8 @@ func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTask
 	}
 
 	if stats.Failed > 0 {
+		// TODO: We should re-insert the job into the queue so that it can be retried
+		// at some poiint in the future.
 		msg := fmt.Sprintf("%d rendition(s) failed", stats.Failed)
 		return w.queries.FailJob(ctx, queries.FailJobParams{
 			ID:           task.JobID,
@@ -143,12 +185,14 @@ func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTask
 	if err != nil {
 		return fmt.Errorf("list renditions: %w", err)
 	}
+
 	renditions := make([]domain.Rendition, 0, len(rows))
 	for _, row := range rows {
 		streamIndex := 0
 		if row.StreamIndex != nil {
 			streamIndex = int(*row.StreamIndex)
 		}
+
 		renditions = append(renditions, domain.Rendition{
 			ID:           row.ID,
 			Name:         row.Name,
@@ -162,7 +206,7 @@ func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTask
 		})
 	}
 
-	masterDir := filepath.Join(task.OutputDir, fileTrimSuffix(task.FileName))
+	masterDir := filepath.Join(task.OutputDir, utils.FileTrimSuffix(task.FileName))
 	if err := WriteMaster(masterDir, renditions); err != nil {
 		msg := fmt.Sprintf("write master playlist: %v", err)
 		return w.queries.FailJob(ctx, queries.FailJobParams{
@@ -181,45 +225,11 @@ func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTask
 	return nil
 }
 
-func (w *Worker) Stop() {
-	w.wg.Wait()
-}
-
-func fileTrimSuffix(name string) string {
-	return strings.TrimSuffix(name, filepath.Ext(name))
-
-}
-
-func renditionArgs(src string, variantDir string, segmentSeconds int, r queries.ClaimJobTaskRow) []string {
-	if segmentSeconds <= 0 {
-		segmentSeconds = 6
-	}
-	vBitrate := fmt.Sprintf("%dk", r.VideoBitrate)
-	vMaxRate := fmt.Sprintf("%dk", r.VideoBitrate*11/10)
-	vBufSize := fmt.Sprintf("%dk", r.VideoBitrate*2)
-	aBitrate := fmt.Sprintf("%dk", r.AudioBitrate)
-	return []string{
-		"-threads", "2",
-		"-i", src,
-		"-map", "0:v:0",
-		"-vf", fmt.Sprintf("scale=w=%d:h=%d", r.Width, r.Height),
-		"-c:v", "libx264",
-		"-profile:v", "high", "-level", "4.0",
-		"-preset", "veryfast",
-		"-b:v", vBitrate,
-		"-maxrate", vMaxRate,
-		"-bufsize", vBufSize,
-		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds),
-		"-sc_threshold", "0",
-		"-map", "0:a:0?",
-		"-c:a", "aac",
-		"-b:a", aBitrate,
-		"-ac", "2",
-		"-f", "hls",
-		"-hls_time", strconv.Itoa(segmentSeconds),
-		"-hls_playlist_type", "vod",
-		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(variantDir, "seg_%05d.ts"),
-		filepath.Join(variantDir, "manifest.m3u8"),
+func (w *Worker) Kill() {
+	select {
+	case <-w.stop:
+		return
+	default:
+		close(w.stop)
 	}
 }

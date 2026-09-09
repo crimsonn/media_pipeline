@@ -26,12 +26,11 @@ func main() {
 
 	q := queries.New(database)
 	numWorkers := config.TranscoderWorkers
-	worker := transcoder.NewWorkers(numWorkers, logger, q)
-
+	orchestrator := transcoder.NewOrchestrator(10, logger, q)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	worker.Start(ctx)
+	go orchestrator.Start(ctx)
 	logger.Info("transcoder workers started", "count", numWorkers)
 
 	<-ctx.Done()
@@ -42,7 +41,7 @@ func main() {
 
 	shutdownDone := make(chan struct{})
 	go func() {
-		worker.Stop()
+		orchestrator.Stop(ctx)
 		close(shutdownDone)
 	}()
 

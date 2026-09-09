@@ -4,7 +4,7 @@ A local lab for learning **ffmpeg**, **HLS**, and a **watch-folder → database 
 
 Drop a video into `watch/`. A watcher waits until the file stops growing, then records it as pending. You pick a **transcode profile** in the UI. Postgres holds the job (and one task per rendition). Transcoder workers claim those tasks and run ffmpeg. HLS lands under `done/`.
 
-This is not a production encoder. It is a playground for how adaptive bitrate streaming is assembled.
+This is not a production encoder. It is a playground for how adaptive bitrate streaming is assembled — and how a worker pool can be supervised with heartbeats.
 
 gRPC is gone. Services do not call each other. They share **PostgreSQL**.
 
@@ -17,13 +17,15 @@ watch/clip.mp4
    watcher (polls folder, waits until mtime is stable)
         │  INSERT pending_files
         ▼
-   UI / API  — assign a transcode profile
+    UI / API  — assign a transcode profile
         │  INSERT jobs + job_tasks (one row per rendition)
         ▼
    Postgres  — the queue
         │  ClaimJobTask (FOR UPDATE SKIP LOCKED)
         ▼
-   transcoder workers  — one ffmpeg process per claimed task
+   transcoder orchestrator
+        │  WorkerManager + HealthMonitor
+        │  one Worker per ffmpeg claim loop
         ▼
 done/clip/
   master.m3u8          ← player entry point
@@ -78,9 +80,18 @@ Schema lives in `internal/db/schema.sql` (applied on process startup and by Comp
 
 Workers claim work with `FOR UPDATE SKIP LOCKED` so two processes cannot take the same task.
 
-### 4. Transcoder — encode
+### 4. Transcoder — orchestrated workers
 
-`cmd/transcoder` is a worker pool (`TRANSCODER_WORKERS`, default 10). Every ~2s each worker tries `ClaimJobTask`. On a hit it:
+`cmd/transcoder` no longer owns a flat goroutine pool. It starts an **orchestrator** that wires two collaborators:
+
+| piece | file | job |
+|-------|------|-----|
+| **Orchestrator** | `internal/transcoder/orchestrator.go` | process entry: spawn the pool, start manager + monitor, shut them down on SIGINT/SIGTERM |
+| **WorkerManager** | `internal/transcoder/worker_manager.go` | create/start individual workers; replace a worker when the health monitor says it is lost |
+| **HealthMonitor** | `internal/transcoder/health_monitor.go` | ping workers, count consecutive misses, request a replacement |
+| **Worker** | `internal/transcoder/worker.go` | one named process: heartbeat loop + claim/ffmpeg loop |
+
+Each worker has a string id (`worker-0`, `worker-1`, …), its own `stop` channel, and a heartbeat channel. `Start` listens for heartbeats and replies with its id. `StartProcessing` is the encode loop: every ~2s it tries `ClaimJobTask`. On a hit it:
 
 - marks the parent job `running`
 - creates `done/<stem>/<rendition>/`
@@ -90,9 +101,22 @@ Workers claim work with `FOR UPDATE SKIP LOCKED` so two processes cannot take th
 
 Workers are independent, so renditions on the same job encode in parallel (subject to CPU).
 
+#### Heartbeats and replacement
+
+Every 5s the health monitor sends a ping on each worker's heartbeat channel and waits up to 1s for replies.
+
+- A reply clears that worker's miss count.
+- A miss increments `consecutiveLosses`.
+- After more than `maxLosses` (currently 2) consecutive misses, the monitor sends a `replace` notification.
+- The worker manager starts a new worker, then tells the monitor to unregister the old id and register the new one.
+
+The orchestrator currently starts **10** workers. `TRANSCODER_WORKERS` is still loaded (and logged) but is not yet passed into `NewOrchestrator`.
+
+ffmpeg argument construction and filename stemming live in `internal/utils` (`RenditionArgs`, `FileTrimSuffix`) so the worker stays focused on claiming, encoding, and finalizing.
+
 ## What ffmpeg is doing
 
-Each claimed task runs roughly this (see `renditionArgs` in `internal/transcoder/worker.go`). Bitrate values on the rendition are passed as kilobits (`5000` → `-b:v 5000k`). Segment length comes from the profile.
+Each claimed task runs roughly this (see `RenditionArgs` in `internal/utils/utils.go`). Bitrate values on the rendition are passed as kilobits (`5000` → `-b:v 5000k`). Segment length comes from the profile.
 
 ```text
 ffmpeg -threads 2 -i source.mp4
@@ -135,10 +159,12 @@ Play via the UI (hls.js) or open `done/<name>/master.m3u8` in VLC / ffplay.
 
 ```text
 cmd/watcher/             folder poller → pending_files
-cmd/transcoder/          Postgres-backed ffmpeg workers
+cmd/transcoder/          starts the transcoder orchestrator
 cmd/api/                 Gin HTTP API
 internal/watcher/        stability checks, pending insert
-internal/transcoder/     claim loop, ffmpeg, master playlist
+internal/transcoder/     orchestrator, worker manager, health monitor,
+                         claim/ffmpeg worker, master playlist
+internal/utils/          ffmpeg args, filename stem
 internal/api/            handlers: transcoder, pending, jobs, playback
 internal/db/             pool, schema apply, enqueue transaction
 internal/db/schema.sql   tables
@@ -208,7 +234,7 @@ Then:
 | `DATABASE_URL` | `postgres://media:media@localhost:5432/media_pipeline?sslmode=disable` | all Go services |
 | `API_ADDR` / `API_PORT` | `localhost` / `8080` | api |
 | `ENVIRONMENT` | `development` | api (Gin mode, CORS) |
-| `TRANSCODER_WORKERS` | `10` | transcoder |
+| `TRANSCODER_WORKERS` | `10` | transcoder (logged; orchestrator currently starts 10) |
 | `WATCH_DIRECTORY` | `./watch` | watcher, api (enqueue path) |
 | `OUTPUT_DIRECTORY` | `./done` | watcher, api, playback, jobs |
 | `POLLING_INTERVAL` | `5s` | parsed at startup |
@@ -221,13 +247,16 @@ Then:
 - Segment duration and keyframe interval should match; otherwise HLS switches can glitch.
 - Postgres + `SKIP LOCKED` is a small stand-in for a dedicated queue (Redis, SQS, NATS).
 - The watcher’s “file stopped changing” check is a substitute for a real upload-complete signal.
+- Heartbeats + replacement are a small stand-in for a real supervisor (Kubernetes liveness, systemd, a process manager). A missed ping here means the worker's heartbeat goroutine stopped answering, not that ffmpeg hung.
 - Source deletion on success is convenient for a lab and dangerous if you still need the original.
 
 ## Next steps
 
-This file is a progress log. Profiles, the UI, Postgres-as-queue, in-browser HLS, and Compose (including `web`) are in. Still open:
+This file is a progress log. Profiles, the UI, Postgres-as-queue, in-browser HLS, Compose (including `web`), and an orchestrated worker pool with heartbeats are in. Still open:
 
+- Pass `TRANSCODER_WORKERS` into `NewOrchestrator` instead of hardcoding 10.
 - Wire `POLLING_INTERVAL` into the watcher tickers (they are still 5s in code).
+- Re-queue failed jobs so a dead rendition can be retried instead of failing the whole job.
 - Optional default profile so a drop in `watch/` can enqueue without the UI.
 - Stop deleting the source until you choose to; keep originals under `watch/` or an archive folder.
 

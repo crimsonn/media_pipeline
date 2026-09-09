@@ -4,3 +4,4 @@
 /watch
 storage.db*
 /bin
+.DS_Store

@@ -6,3 +6,4 @@ watch
 *.mp4
 /bin
 web
+.DS_Store
