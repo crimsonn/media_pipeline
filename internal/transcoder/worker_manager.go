@@ -4,22 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"sync"
-
-	"github.com/crimsonn/media_pipeline/internal/db/queries"
 )
 
 type WorkerManager struct {
-	logger              *slog.Logger
-	workers             map[string]*Worker
-	queries             *queries.Queries
-	numWorkers          int
-	mu                  sync.Mutex
-	stopOnce            sync.Once
-	stop                chan struct{}
-	heartbeatResponse   chan string
-	notificationChannel chan WorkerNotification
+	logger            *slog.Logger
+	workers           map[string]*Worker
+	store             JobStore
+	numWorkers        int
+	nextWorkerID      int
+	mu                sync.Mutex
+	stopOnce          sync.Once
+	stop              chan struct{}
+	heartbeatResponse chan string
+	fromMonitor       chan WorkerNotification
+	toMonitor         chan WorkerNotification
 }
 
 type Notification struct {
@@ -30,28 +29,27 @@ type Notification struct {
 
 func NewWorkerManager(
 	logger *slog.Logger,
-	queries *queries.Queries,
+	store JobStore,
 	numWorkers int,
 	heartbeatResponse chan string,
 ) *WorkerManager {
 	return &WorkerManager{
 		logger:            logger,
 		workers:           make(map[string]*Worker),
-		queries:           queries,
+		store:             store,
 		numWorkers:        numWorkers,
+		nextWorkerID:      numWorkers,
 		stop:              make(chan struct{}),
 		heartbeatResponse: heartbeatResponse,
+		fromMonitor:       make(chan WorkerNotification),
+		toMonitor:         make(chan WorkerNotification),
 	}
-}
-
-func randRange(min, max int) int {
-	return rand.IntN(max-min) + min
 }
 
 func (wm *WorkerManager) CreateWorker(ctx context.Context, id string) *Worker {
 	heartbeat := make(chan struct{})
 	stop := make(chan struct{})
-	w := NewWorker(id, wm.logger, wm.queries, heartbeat, wm.heartbeatResponse, stop)
+	w := NewWorker(id, wm.logger, wm.store, heartbeat, wm.heartbeatResponse, stop)
 	wm.mu.Lock()
 	wm.workers[id] = w
 	wm.mu.Unlock()
@@ -70,36 +68,71 @@ func (wm *WorkerManager) Notify(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case notification := <-wm.notificationChannel:
+		case notification := <-wm.fromMonitor:
 			if notification.action == "replace" {
-				wm.logger.Info("replacing worker", "id", notification.worker.id)
-				worker := wm.CreateWorker(ctx, fmt.Sprintf("worker-%d", wm.numWorkers+1))
-				registerNotification := WorkerNotification{
-					worker: &WorkerHeartbeat{
-						id:        worker.id,
-						heartbeat: worker.heartbeat,
-					},
-					action: "register",
-				}
-				unregisterNotification := WorkerNotification{
-					worker: &WorkerHeartbeat{
-						id:        notification.worker.id,
-						heartbeat: notification.worker.heartbeat,
-					},
-					action: "unregister",
-				}
-				wm.NotifyHealthMonitor(ctx, unregisterNotification)
-				wm.NotifyHealthMonitor(ctx, registerNotification)
+				wm.replaceWorker(ctx, notification)
 			}
 		}
 	}
 }
 
+func (wm *WorkerManager) replaceWorker(ctx context.Context, notification WorkerNotification) {
+	oldID := ""
+	if notification.worker != nil {
+		oldID = notification.worker.id
+	}
+	wm.logger.Info("replacing worker", "id", oldID)
+
+	wm.mu.Lock()
+	old := wm.workers[oldID]
+	delete(wm.workers, oldID)
+	id := fmt.Sprintf("worker-%d", wm.nextWorkerID)
+	wm.nextWorkerID++
+	wm.mu.Unlock()
+
+	if old != nil {
+		old.Kill()
+	}
+
+	worker := wm.CreateWorker(ctx, id)
+	unregisterNotification := WorkerNotification{
+		worker: &WorkerHeartbeat{
+			id:        oldID,
+			heartbeat: nil,
+		},
+		action: "unregister",
+	}
+	if notification.worker != nil {
+		unregisterNotification.worker.heartbeat = notification.worker.heartbeat
+	}
+	registerNotification := WorkerNotification{
+		worker: &WorkerHeartbeat{
+			id:        worker.id,
+			heartbeat: worker.heartbeat,
+		},
+		action: "register",
+	}
+	wm.NotifyHealthMonitor(ctx, unregisterNotification)
+	wm.NotifyHealthMonitor(ctx, registerNotification)
+}
+
 func (wm *WorkerManager) NotifyHealthMonitor(ctx context.Context, notification WorkerNotification) {
 	select {
-	case wm.notificationChannel <- notification:
+	case wm.toMonitor <- notification:
 	case <-ctx.Done():
 	}
+}
+
+func (wm *WorkerManager) workerCount() int {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	return len(wm.workers)
+}
+
+func (wm *WorkerManager) lookupWorker(id string) *Worker {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+	return wm.workers[id]
 }
 
 func (wm *WorkerManager) Stop() {

@@ -23,11 +23,25 @@ const (
 	WorkerStateActive
 )
 
+type JobStore interface {
+	ClaimJobTask(ctx context.Context) (queries.ClaimJobTaskRow, error)
+	FailJobTask(ctx context.Context, arg queries.FailJobTaskParams) error
+	MarkJobRunning(ctx context.Context, id int64) error
+	CompleteJobTask(ctx context.Context, id int64) error
+	JobTaskStats(ctx context.Context, jobID int64) (queries.JobTaskStatsRow, error)
+	UpdateJobProgress(ctx context.Context, arg queries.UpdateJobProgressParams) error
+	FailJob(ctx context.Context, arg queries.FailJobParams) error
+	ListJobRenditions(ctx context.Context, jobID int64) ([]queries.ListJobRenditionsRow, error)
+	CompleteJob(ctx context.Context, id int64) error
+}
+
+var _ JobStore = (*queries.Queries)(nil)
+
 type Worker struct {
 	id                string
 	status            WorkerState
 	logger            *slog.Logger
-	queries           *queries.Queries
+	store             JobStore
 	heartbeat         chan struct{}
 	heartbeatResponse chan string
 	stop              chan struct{}
@@ -36,7 +50,7 @@ type Worker struct {
 func NewWorker(
 	id string,
 	logger *slog.Logger,
-	queries *queries.Queries,
+	store JobStore,
 	heartbeat chan struct{},
 	heartbeatResponse chan string,
 	stop chan struct{},
@@ -45,7 +59,7 @@ func NewWorker(
 		id:                id,
 		status:            WorkerStateIdle,
 		logger:            logger,
-		queries:           queries,
+		store:             store,
 		heartbeat:         heartbeat,
 		heartbeatResponse: heartbeatResponse,
 		stop:              stop,
@@ -94,7 +108,7 @@ func (w *Worker) StartProcessing(ctx context.Context) {
 			w.logger.Info("Shutting down worker", "id=", w.id)
 			return
 		case <-ticker.C:
-			task, err := w.queries.ClaimJobTask(ctx)
+			task, err := w.store.ClaimJobTask(ctx)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					continue
@@ -109,7 +123,7 @@ func (w *Worker) StartProcessing(ctx context.Context) {
 
 func (w *Worker) processTask(ctx context.Context, workerID string, task queries.ClaimJobTaskRow) {
 	fail := func(msg string) {
-		if err := w.queries.FailJobTask(ctx, queries.FailJobTaskParams{
+		if err := w.store.FailJobTask(ctx, queries.FailJobTaskParams{
 			ID:           task.TaskID,
 			ErrorMessage: &msg,
 		}); err != nil {
@@ -126,7 +140,7 @@ func (w *Worker) processTask(ctx context.Context, workerID string, task queries.
 		}
 	}()
 
-	if err := w.queries.MarkJobRunning(ctx, task.JobID); err != nil {
+	if err := w.store.MarkJobRunning(ctx, task.JobID); err != nil {
 		fail(fmt.Sprintf("mark job running: %v", err))
 	}
 	stem := utils.FileTrimSuffix(task.FileName)
@@ -144,7 +158,7 @@ func (w *Worker) processTask(ctx context.Context, workerID string, task queries.
 		return
 	}
 
-	if err := w.queries.CompleteJobTask(ctx, task.TaskID); err != nil {
+	if err := w.store.CompleteJobTask(ctx, task.TaskID); err != nil {
 		w.logger.Error("failed to complete task", "task", task.TaskID, "error", err)
 		return
 	}
@@ -155,14 +169,14 @@ func (w *Worker) processTask(ctx context.Context, workerID string, task queries.
 }
 
 func (w *Worker) finalizeJob(ctx context.Context, task queries.ClaimJobTaskRow) error {
-	stats, err := w.queries.JobTaskStats(ctx, task.JobID)
+	stats, err := w.store.JobTaskStats(ctx, task.JobID)
 	if err != nil {
 		return fmt.Errorf("task stats: %w", err)
 	}
 
 	total := stats.Pending + stats.Running + stats.Completed + stats.Failed
 	if total > 0 {
-		if err := w.queries.UpdateJobProgress(ctx, queries.UpdateJobProgressParams{
+		if err := w.store.UpdateJobProgress(ctx, queries.UpdateJobProgressParams{
 			ID:              task.JobID,
 			ProgressPercent: float32(stats.Completed) / float32(total) * 100,
 		}); err != nil {
@@ -178,13 +192,13 @@ func (w *Worker) finalizeJob(ctx context.Context, task queries.ClaimJobTaskRow) 
 		// TODO: We should re-insert the job into the queue so that it can be retried
 		// at some poiint in the future.
 		msg := fmt.Sprintf("%d rendition(s) failed", stats.Failed)
-		return w.queries.FailJob(ctx, queries.FailJobParams{
+		return w.store.FailJob(ctx, queries.FailJobParams{
 			ID:           task.JobID,
 			ErrorMessage: &msg,
 		})
 	}
 
-	rows, err := w.queries.ListJobRenditions(ctx, task.JobID)
+	rows, err := w.store.ListJobRenditions(ctx, task.JobID)
 	if err != nil {
 		return fmt.Errorf("list renditions: %w", err)
 	}
@@ -212,13 +226,13 @@ func (w *Worker) finalizeJob(ctx context.Context, task queries.ClaimJobTaskRow) 
 	masterDir := filepath.Join(task.OutputDir, utils.FileTrimSuffix(task.FileName))
 	if err := WriteMaster(masterDir, renditions); err != nil {
 		msg := fmt.Sprintf("write master playlist: %v", err)
-		return w.queries.FailJob(ctx, queries.FailJobParams{
+		return w.store.FailJob(ctx, queries.FailJobParams{
 			ID:           task.JobID,
 			ErrorMessage: &msg,
 		})
 	}
 
-	if err := w.queries.CompleteJob(ctx, task.JobID); err != nil {
+	if err := w.store.CompleteJob(ctx, task.JobID); err != nil {
 		return fmt.Errorf("complete job: %w", err)
 	}
 

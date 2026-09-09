@@ -7,27 +7,21 @@ import (
 	"time"
 )
 
-// Design document:
-// The health monitor is responsible for monitoring the health of the workers.
-// It will be started as a goroutine and will run until the stop channel is closed.
-// It will use the heartbeat channel to send a heartbeat to the workers.
-// It will collect the response from the workers and check if they are alive.
-// If a worker is not responding, it will be considered dead/unhealthy and a new worker will be spawned in its place.
-
 type WorkerHeartbeat struct {
 	id        string
 	heartbeat chan struct{}
 }
 
 type HealthMonitor struct {
-	logger               *slog.Logger
-	ctx                  context.Context
-	workers              map[string]*WorkerHeartbeat
-	consecutiveLosses    map[string]int
-	maxLosses            int
-	mu                   sync.Mutex
-	heartbeatResponse    chan string
-	workerManagerChannel chan WorkerNotification
+	logger            *slog.Logger
+	ctx               context.Context
+	workers           map[string]*WorkerHeartbeat
+	consecutiveLosses map[string]int
+	maxLosses         int
+	mu                sync.Mutex
+	heartbeatResponse chan string
+	fromManager       chan WorkerNotification
+	toManager         chan WorkerNotification
 }
 
 type WorkerNotification struct {
@@ -40,6 +34,8 @@ func NewHealthMonitor(
 	ctx context.Context,
 	maxLosses int,
 	heartbeatResponse chan string,
+	fromManager chan WorkerNotification,
+	toManager chan WorkerNotification,
 ) *HealthMonitor {
 	return &HealthMonitor{
 		logger:            logger,
@@ -48,6 +44,8 @@ func NewHealthMonitor(
 		consecutiveLosses: make(map[string]int),
 		maxLosses:         maxLosses,
 		heartbeatResponse: heartbeatResponse,
+		fromManager:       fromManager,
+		toManager:         toManager,
 	}
 }
 
@@ -91,7 +89,7 @@ func (h *HealthMonitor) Notify() {
 		select {
 		case <-h.ctx.Done():
 			return
-		case notification := <-h.workerManagerChannel:
+		case notification := <-h.fromManager:
 			switch notification.action {
 			case "register":
 				h.RegisterWorker(&WorkerHeartbeat{
@@ -160,7 +158,7 @@ func (h *HealthMonitor) CheckHealth() {
 						action: "replace",
 					}
 					select {
-					case h.workerManagerChannel <- notification:
+					case h.toManager <- notification:
 					case <-h.ctx.Done():
 						return
 					}

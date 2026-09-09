@@ -37,11 +37,15 @@ func NewOrchestrator(
 
 func (o *Orchestrator) Start(ctx context.Context) {
 	heartbeatResponse := make(chan string)
-	notify := make(chan WorkerNotification)
-	o.healthMonitor = NewHealthMonitor(o.logger, ctx, 2, heartbeatResponse)
-	o.healthMonitor.workerManagerChannel = notify
 	o.workerManager = NewWorkerManager(o.logger, o.queries, o.numWorkers, heartbeatResponse)
-	o.workerManager.notificationChannel = notify
+	o.healthMonitor = NewHealthMonitor(
+		o.logger,
+		ctx,
+		2,
+		heartbeatResponse,
+		o.workerManager.toMonitor,
+		o.workerManager.fromMonitor,
+	)
 	for i := range o.numWorkers {
 		worker := o.workerManager.CreateWorker(ctx, fmt.Sprintf("worker-%d", i))
 		o.healthMonitor.RegisterWorker(&WorkerHeartbeat{
