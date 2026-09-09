@@ -52,9 +52,17 @@ func NewHealthMonitor(
 }
 
 func (h *HealthMonitor) Start(ctx context.Context) {
-	go h.CheckHealth()
-	go h.Notify()
-	<-ctx.Done()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		h.CheckHealth()
+	}()
+	go func() {
+		defer wg.Done()
+		h.Notify()
+	}()
+	wg.Wait()
 	h.logger.Info("shutting down health monitor")
 }
 
@@ -125,6 +133,9 @@ func (h *HealthMonitor) CheckHealth() {
 
 			for collecting {
 				select {
+				case <-h.ctx.Done():
+					timeout.Stop()
+					return
 				case workerId := <-h.heartbeatResponse:
 					h.logger.Info("health monitor received heartbeat from", "id", workerId)
 					delete(pending, workerId)
@@ -148,7 +159,11 @@ func (h *HealthMonitor) CheckHealth() {
 						},
 						action: "replace",
 					}
-					h.workerManagerChannel <- notification
+					select {
+					case h.workerManagerChannel <- notification:
+					case <-h.ctx.Done():
+						return
+					}
 					delete(pending, workerId)
 					h.logger.Warn("worker lost, spawning a new one at the same position", "retries", h.consecutiveLosses[workerId], "maxLosses", h.maxLosses)
 				}
@@ -157,8 +172,6 @@ func (h *HealthMonitor) CheckHealth() {
 	}
 }
 
-func (h *HealthMonitor) Stop(ctx context.Context) {
+func (h *HealthMonitor) Stop() {
 	h.logger.Info("health monitor stopped")
-	close(h.heartbeatResponse)
-	close(h.workerManagerChannel)
 }

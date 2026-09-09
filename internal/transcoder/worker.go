@@ -61,7 +61,10 @@ func (w *Worker) Start(ctx context.Context) {
 				return
 			case <-w.stop:
 				return
-			case <-w.heartbeat:
+			case _, ok := <-w.heartbeat:
+				if !ok {
+					return
+				}
 				select {
 				case w.heartbeatResponse <- w.id:
 				case <-ctx.Done():

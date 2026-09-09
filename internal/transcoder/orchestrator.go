@@ -49,17 +49,31 @@ func (o *Orchestrator) Start(ctx context.Context) {
 			heartbeat: worker.heartbeat,
 		})
 	}
-	go o.workerManager.Start(ctx)
-	go o.healthMonitor.Start(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		o.workerManager.Start(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		o.healthMonitor.Start(ctx)
+	}()
+
 	<-ctx.Done()
 	o.logger.Info("shutting down orchestrator")
-	o.workerManager.Stop(ctx)
-	o.healthMonitor.Stop(ctx)
-	o.wg.Wait()
+	wg.Wait()
+	o.workerManager.Stop()
+	o.healthMonitor.Stop()
 	o.logger.Info("orchestrator stopped")
-
 }
 
-func (o *Orchestrator) Stop(ctx context.Context) {
-	close(o.stop)
+func (o *Orchestrator) Stop() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	select {
+	case <-o.stop:
+	default:
+		close(o.stop)
+	}
 }

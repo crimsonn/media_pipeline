@@ -30,7 +30,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go orchestrator.Start(ctx)
+	done := make(chan struct{})
+	go func() {
+		orchestrator.Start(ctx)
+		close(done)
+	}()
 	logger.Info("transcoder workers started", "count", numWorkers)
 
 	<-ctx.Done()
@@ -39,14 +43,8 @@ func main() {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 
-	shutdownDone := make(chan struct{})
-	go func() {
-		orchestrator.Stop(ctx)
-		close(shutdownDone)
-	}()
-
 	select {
-	case <-shutdownDone:
+	case <-done:
 		logger.Info("all workers stopped gracefully")
 	case <-shutdownCtx.Done():
 		logger.Warn("workers did not finish in time, forcing exit")

@@ -16,7 +16,7 @@ type WorkerManager struct {
 	queries             *queries.Queries
 	numWorkers          int
 	mu                  sync.Mutex
-	wg                  sync.WaitGroup
+	stopOnce            sync.Once
 	stop                chan struct{}
 	heartbeatResponse   chan string
 	notificationChannel chan WorkerNotification
@@ -52,21 +52,17 @@ func (wm *WorkerManager) CreateWorker(ctx context.Context, id string) *Worker {
 	heartbeat := make(chan struct{})
 	stop := make(chan struct{})
 	w := NewWorker(id, wm.logger, wm.queries, heartbeat, wm.heartbeatResponse, stop)
+	wm.mu.Lock()
 	wm.workers[id] = w
+	wm.mu.Unlock()
 	go w.Start(ctx)
 	go w.StartProcessing(ctx)
 	return w
 }
 
 func (wm *WorkerManager) Start(ctx context.Context) {
-	go wm.Notify(ctx)
-	<-ctx.Done()
+	wm.Notify(ctx)
 	wm.logger.Info("shutting down worker manager")
-	for _, w := range wm.workers {
-		close(w.heartbeat)
-	}
-	wm.wg.Wait()
-	wm.logger.Info("worker manager stopped")
 }
 
 func (wm *WorkerManager) Notify(ctx context.Context) {
@@ -100,14 +96,24 @@ func (wm *WorkerManager) Notify(ctx context.Context) {
 }
 
 func (wm *WorkerManager) NotifyHealthMonitor(ctx context.Context, notification WorkerNotification) {
-	wm.notificationChannel <- notification
+	select {
+	case wm.notificationChannel <- notification:
+	case <-ctx.Done():
+	}
 }
 
-func (wm *WorkerManager) Stop(ctx context.Context) {
-	close(wm.stop)
-	for _, w := range wm.workers {
-		close(w.heartbeat)
-	}
-	wm.wg.Wait()
-	wm.logger.Info("worker manager stopped")
+func (wm *WorkerManager) Stop() {
+	wm.stopOnce.Do(func() {
+		close(wm.stop)
+		wm.mu.Lock()
+		workers := make([]*Worker, 0, len(wm.workers))
+		for _, w := range wm.workers {
+			workers = append(workers, w)
+		}
+		wm.mu.Unlock()
+		for _, w := range workers {
+			w.Kill()
+		}
+		wm.logger.Info("worker manager stopped")
+	})
 }

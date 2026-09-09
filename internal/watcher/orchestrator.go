@@ -80,6 +80,7 @@ func (o *Orchestrator) Start() error {
 		o.wg.Add(1)
 		go o.worker(ctx, i)
 	}
+	o.wg.Add(1)
 	go o.StartPolling(ctx)
 	<-ctx.Done()
 	o.logger.Info("shutting down orchestrator")
@@ -119,7 +120,7 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 	defer func() {
 		o.mu.Lock()
 		delete(o.filesChecked, task.fileName)
-		defer o.mu.Unlock()
+		o.mu.Unlock()
 	}()
 
 	o.logger.Info("worker processing task", "workerId", workerid, "taskId", task.id, "fileName", task.fileName)
@@ -185,14 +186,19 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 }
 
 func (o *Orchestrator) StartPolling(ctx context.Context) {
+	defer o.wg.Done()
 	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-tick.C:
 			o.walkDirectory(ctx)
+			if ctx.Err() != nil {
+				o.logger.Info("polling stopped")
+				return
+			}
 		case <-ctx.Done():
 			o.logger.Info("polling stopped")
-			tick.Stop()
 			return
 		}
 	}
@@ -205,26 +211,32 @@ func (o *Orchestrator) walkDirectory(ctx context.Context) {
 		return
 	}
 	for _, file := range files {
+		if ctx.Err() != nil {
+			return
+		}
+
 		o.mu.Lock()
 		alreadyChecked := o.filesChecked[file.Name()]
-		if !alreadyChecked {
-			o.filesChecked[file.Name()] = true
-		}
 		if alreadyChecked {
+			o.mu.Unlock()
 			continue
 		}
+		o.filesChecked[file.Name()] = true
+		o.mu.Unlock()
 
 		existing, err := o.db.GetPendingFile(ctx, file.Name())
 		if err == nil {
+			o.mu.Lock()
 			delete(o.filesChecked, file.Name())
-			o.logger.Info("file already exists, skipping", "file_id", existing.ID)
 			o.mu.Unlock()
+			o.logger.Info("file already exists, skipping", "file_id", existing.ID)
 			continue
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
+			o.mu.Lock()
 			delete(o.filesChecked, file.Name())
-			o.logger.Error("failed to get pending file", "error", err)
 			o.mu.Unlock()
+			o.logger.Error("failed to get pending file", "error", err)
 			continue
 		}
 		submitted := o.Submit(&Task{
@@ -233,8 +245,6 @@ func (o *Orchestrator) walkDirectory(ctx context.Context) {
 			fileName:      file.Name(),
 			lastCheckedAt: time.Now(),
 		})
-		o.mu.Unlock()
-
 		if !submitted {
 			o.mu.Lock()
 			delete(o.filesChecked, file.Name())
