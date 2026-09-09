@@ -2,6 +2,7 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 
+import { ThemeProvider, themeInitScript } from '#/lib/theme'
 import appCss from '../styles.css?url'
 
 export const Route = createRootRoute({
@@ -30,12 +31,16 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // themeInitScript sets `class="dark"` on <html> before hydration, which the
+    // server markup can't know about — suppress the resulting attribute warning.
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Applies the persisted / system theme before paint to avoid a flash. */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <HeadContent />
       </head>
       <body>
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
         <TanStackDevtools
           config={{
             position: 'bottom-right',

@@ -62,3 +62,11 @@ CREATE TABLE IF NOT EXISTS job_tasks (
 CREATE INDEX IF NOT EXISTS job_tasks_pending_created_at_idx
   ON job_tasks (created_at)
   WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS pending_files (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

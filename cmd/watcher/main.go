@@ -1,46 +1,43 @@
 package main
 
 import (
-	"fmt"
-	"log"
+	"context"
 	"log/slog"
 	"os"
-	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
+	"github.com/crimsonn/media_pipeline/internal/db"
+	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/watcher"
-	"github.com/crimsonn/media_pipeline/pkg/pb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
-	transcoderAddr := config.GetEnvString("TRANSCODER_ADDR", ":50051")
-	if err := run(transcoderAddr); err != nil {
-		slog.Error("watchdog failed", "err", err)
+	cfg := config.LoadConfig()
+	database, err := db.OpenDatabase(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("open database", "err", err)
 		os.Exit(1)
 	}
-}
-
-func run(addr string) error {
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-
-	conn, err := grpc.NewClient(addr, opts...)
-	if err != nil {
-		log.Fatalf("failed to dial: %v", err)
+	defer database.Close()
+	if _, err := os.Stat(cfg.WatchDirectory); os.IsNotExist(err) {
+		if err := os.MkdirAll(cfg.WatchDirectory, 0o755); err != nil {
+			slog.Error("create watch directory", "err", err)
+			os.Exit(1)
+		}
 	}
-	defer conn.Close()
-	watchDogFolder := config.GetEnvString("WATCHDOG_FOLDER", "./watch")
-	outputDirectory := config.GetEnvString("WATCHDOG_OUTPUT", "./done")
-	watchDogDelay := config.GetEnvString("WATCHDOG_DELAY", "5s")
-	delay, err := time.ParseDuration(watchDogDelay)
-	if err != nil {
-		return fmt.Errorf("cant parse duration from delay: %w", err)
+	if _, err := os.Stat(cfg.OutputDirectory); os.IsNotExist(err) {
+		if err := os.MkdirAll(cfg.OutputDirectory, 0o755); err != nil {
+			slog.Error("create output directory", "err", err)
+			os.Exit(1)
+		}
 	}
+
 	numWorkers := config.GetEnvInt("NUM_WORKERS", 10)
 	queueCapacity := config.GetEnvInt("QUEUE_CAPACITY", 100)
-	transcoder := pb.NewTranscoderServiceClient(conn)
-	orchestrator := watcher.NewOrchestrator(numWorkers, queueCapacity, delay, watchDogFolder, outputDirectory, transcoder)
-	return orchestrator.Start()
+	q := queries.New(database)
+	orchestrator := watcher.NewOrchestrator(numWorkers, queueCapacity, cfg.PollingInterval, cfg.WatchDirectory, cfg.OutputDirectory, q)
+	if err := orchestrator.Start(); err != nil {
+		slog.Error("start orchestrator", "err", err)
+		os.Exit(1)
+	}
 }

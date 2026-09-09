@@ -4,7 +4,7 @@ import axios from 'axios'
  * Base URL of the transcoder REST API (Gin server, see internal/server/router.go).
  * Override in web/.env with VITE_API_URL, e.g. http://localhost:8080/api/v1
  */
-const baseURL =
+export const baseURL =
   import.meta.env.VITE_API_URL ?? 'http://localhost:8080/api/v1'
 
 export const api = axios.create({

@@ -1,22 +1,5 @@
-PROTO_DIR  := api/proto
-PB_DIR     := pkg/pb
-GO_MODULE  := github.com/crimsonn/media_pipeline
-PROTO_FILES := $(shell find $(PROTO_DIR) -name '*.proto')
 BIN_DIR  := bin
 SERVICES := watcher transcoder api
-
-
-.PHONY: proto
-proto:
-	@mkdir -p $(PB_DIR)
-	protoc -I $(PROTO_DIR) \
-		--go_out=. --go_opt=module=$(GO_MODULE) \
-		--go-grpc_out=. --go-grpc_opt=module=$(GO_MODULE) \
-		$(PROTO_FILES)
-
-.PHONY: proto-clean
-proto-clean:
-	rm -rf $(PB_DIR)
 
 .PHONY: run-watcher
 run-watcher:
@@ -26,10 +9,9 @@ run-watcher:
 run-transcoder:
 	go run cmd/transcoder/main.go
 
-.PHONY: api
+.PHONY: run-api
 run-api:
 	go run cmd/api/main.go
-
 
 .PHONY: build
 build:

@@ -7,6 +7,8 @@ package queries
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimJobTask = `-- name: ClaimJobTask :one
@@ -117,6 +119,122 @@ type FailJobTaskParams struct {
 func (q *Queries) FailJobTask(ctx context.Context, arg FailJobTaskParams) error {
 	_, err := q.db.Exec(ctx, failJobTask, arg.ID, arg.ErrorMessage)
 	return err
+}
+
+const getLatestJobTasks = `-- name: GetLatestJobTasks :many
+WITH latest_jobs AS (
+  SELECT
+    id,
+    status,
+    error_message,
+    created_at,
+    updated_at,
+    profile_id,
+    source_path,
+    output_dir,
+    file_name
+  FROM jobs
+  ORDER BY created_at DESC
+  LIMIT 10
+)
+SELECT
+  j.id AS job_id,
+  j.status AS job_status,
+  j.error_message AS job_error_message,
+  j.created_at AS job_created_at,
+  j.updated_at AS job_updated_at,
+  j.profile_id AS job_profile_id,
+  j.source_path AS job_source_path,
+  j.output_dir AS job_output_dir,
+  j.file_name AS job_file_name,
+  jt.id AS task_id,
+  jt.status AS task_status,
+  jt.created_at AS task_created_at,
+  jt.updated_at AS task_updated_at,
+  jt.error_message AS task_error_message,
+  r.id AS rendition_id,
+  r.name AS rendition_name,
+  r.width AS rendition_width,
+  r.height AS rendition_height,
+  r.video_bitrate AS rendition_video_bitrate,
+  r.audio_bitrate AS rendition_audio_bitrate,
+  r.video_codec AS rendition_video_codec,
+  r.audio_codec AS rendition_audio_codec,
+  r.fps AS rendition_fps
+FROM latest_jobs AS j
+INNER JOIN job_tasks AS jt ON jt.job_id = j.id
+INNER JOIN renditions AS r ON r.id = jt.rendition_id
+ORDER BY j.created_at DESC, jt.id
+`
+
+type GetLatestJobTasksRow struct {
+	JobID                 int64
+	JobStatus             string
+	JobErrorMessage       *string
+	JobCreatedAt          pgtype.Timestamptz
+	JobUpdatedAt          pgtype.Timestamptz
+	JobProfileID          int64
+	JobSourcePath         string
+	JobOutputDir          string
+	JobFileName           string
+	TaskID                int64
+	TaskStatus            string
+	TaskCreatedAt         pgtype.Timestamptz
+	TaskUpdatedAt         pgtype.Timestamptz
+	TaskErrorMessage      *string
+	RenditionID           int64
+	RenditionName         string
+	RenditionWidth        int32
+	RenditionHeight       int32
+	RenditionVideoBitrate int32
+	RenditionAudioBitrate int32
+	RenditionVideoCodec   string
+	RenditionAudioCodec   string
+	RenditionFps          int32
+}
+
+func (q *Queries) GetLatestJobTasks(ctx context.Context) ([]GetLatestJobTasksRow, error) {
+	rows, err := q.db.Query(ctx, getLatestJobTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetLatestJobTasksRow
+	for rows.Next() {
+		var i GetLatestJobTasksRow
+		if err := rows.Scan(
+			&i.JobID,
+			&i.JobStatus,
+			&i.JobErrorMessage,
+			&i.JobCreatedAt,
+			&i.JobUpdatedAt,
+			&i.JobProfileID,
+			&i.JobSourcePath,
+			&i.JobOutputDir,
+			&i.JobFileName,
+			&i.TaskID,
+			&i.TaskStatus,
+			&i.TaskCreatedAt,
+			&i.TaskUpdatedAt,
+			&i.TaskErrorMessage,
+			&i.RenditionID,
+			&i.RenditionName,
+			&i.RenditionWidth,
+			&i.RenditionHeight,
+			&i.RenditionVideoBitrate,
+			&i.RenditionAudioBitrate,
+			&i.RenditionVideoCodec,
+			&i.RenditionAudioCodec,
+			&i.RenditionFps,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertJobTask = `-- name: InsertJobTask :one

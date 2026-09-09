@@ -9,31 +9,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crimsonn/media_pipeline/internal/api/jobs"
+	"github.com/crimsonn/media_pipeline/internal/api/pending"
+	"github.com/crimsonn/media_pipeline/internal/api/playback"
 	"github.com/crimsonn/media_pipeline/internal/api/transcoder"
 	"github.com/crimsonn/media_pipeline/internal/config"
 	"github.com/crimsonn/media_pipeline/internal/db"
 	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/server"
-	"github.com/crimsonn/media_pipeline/pkg/pb"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func main() {
 	logger := slog.Default()
 	config := config.LoadConfig()
-	transcoderAddr := config.TranscoderAddr
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	conn, err := grpc.NewClient(transcoderAddr, opts...)
-	if err != nil {
-		logger.Error("Failed to connect to transcoder", "error", err)
-		os.Exit(1)
-	}
-	defer conn.Close()
-	trClient := pb.NewTranscoderServiceClient(conn)
-	healthClient := healthpb.NewHealthClient(conn)
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	database, err := db.OpenDatabase(dbCtx, config.DatabaseURL)
 	dbCancel()
@@ -46,12 +34,19 @@ func main() {
 	q := queries.New(database)
 	transcoderService := transcoder.NewService(q)
 	transcoderHandler := transcoder.NewHandler(transcoderService)
+	pendingService := pending.NewService(database, config)
+	pendingHandler := pending.NewHandler(pendingService)
+	jobsService := jobs.NewService(q)
+	jobsHandler := jobs.NewHandler(jobsService)
+	playbackService := playback.NewService(config)
+	playbackHandler := playback.NewHandler(playbackService)
 	router := server.SetupRouter(
 		logger,
 		config,
-		trClient,
-		healthClient,
 		transcoderHandler,
+		pendingHandler,
+		jobsHandler,
+		playbackHandler,
 	)
 	srv := &http.Server{
 		Addr:    config.APIAddr + ":" + config.APIPort,

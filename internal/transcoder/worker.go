@@ -85,7 +85,7 @@ func (w *Worker) processTask(ctx context.Context, workerID int, task queries.Cla
 		w.logger.Error("failed to mark job running", "job", task.JobID, "error", err)
 	}
 
-	stem := fileStem(task.FileName)
+	stem := fileTrimSuffix(task.FileName)
 	variantDir := filepath.Join(task.OutputDir, stem, task.RenditionName)
 	if err := os.MkdirAll(variantDir, 0o755); err != nil {
 		fail(fmt.Sprintf("create variant directory: %v", err))
@@ -162,7 +162,7 @@ func (w *Worker) maybeFinalizeJob(ctx context.Context, task queries.ClaimJobTask
 		})
 	}
 
-	masterDir := filepath.Join(task.OutputDir, fileStem(task.FileName))
+	masterDir := filepath.Join(task.OutputDir, fileTrimSuffix(task.FileName))
 	if err := WriteMaster(masterDir, renditions); err != nil {
 		msg := fmt.Sprintf("write master playlist: %v", err)
 		return w.queries.FailJob(ctx, queries.FailJobParams{
@@ -185,28 +185,36 @@ func (w *Worker) Stop() {
 	w.wg.Wait()
 }
 
-func fileStem(name string) string {
+func fileTrimSuffix(name string) string {
 	return strings.TrimSuffix(name, filepath.Ext(name))
+
 }
 
 func renditionArgs(src string, variantDir string, segmentSeconds int, r queries.ClaimJobTaskRow) []string {
 	if segmentSeconds <= 0 {
 		segmentSeconds = 6
 	}
+	vBitrate := fmt.Sprintf("%dk", r.VideoBitrate)
+	vMaxRate := fmt.Sprintf("%dk", r.VideoBitrate*11/10)
+	vBufSize := fmt.Sprintf("%dk", r.VideoBitrate*2)
+	aBitrate := fmt.Sprintf("%dk", r.AudioBitrate)
 	return []string{
+		"-threads", "2",
 		"-i", src,
 		"-map", "0:v:0",
 		"-vf", fmt.Sprintf("scale=w=%d:h=%d", r.Width, r.Height),
 		"-c:v", "libx264",
 		"-profile:v", "high", "-level", "4.0",
 		"-preset", "veryfast",
-		"-b:v", strconv.Itoa(int(r.VideoBitrate)),
-		"-maxrate", strconv.Itoa(int(r.VideoBitrate * 11 / 10)),
-		"-bufsize", strconv.Itoa(int(r.VideoBitrate * 2)),
+		"-b:v", vBitrate,
+		"-maxrate", vMaxRate,
+		"-bufsize", vBufSize,
 		"-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds),
 		"-sc_threshold", "0",
 		"-map", "0:a:0?",
-		"-c:a", "aac", "-b:a", strconv.Itoa(int(r.AudioBitrate)), "-ac", "2",
+		"-c:a", "aac",
+		"-b:a", aBitrate,
+		"-ac", "2",
 		"-f", "hls",
 		"-hls_time", strconv.Itoa(segmentSeconds),
 		"-hls_playlist_type", "vod",

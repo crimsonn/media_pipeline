@@ -4,3 +4,5 @@ done
 watch
 *.md
 *.mp4
+/bin
+web

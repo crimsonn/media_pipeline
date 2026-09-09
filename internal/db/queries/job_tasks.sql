@@ -90,3 +90,49 @@ LEFT JOIN profile_renditions pr
   ON pr.profile_id = j.profile_id AND pr.rendition_id = r.id
 WHERE jt.job_id = $1
 ORDER BY pr.stream_index NULLS LAST, r.name;
+
+
+-- name: GetLatestJobTasks :many
+WITH latest_jobs AS (
+  SELECT
+    id,
+    status,
+    error_message,
+    created_at,
+    updated_at,
+    profile_id,
+    source_path,
+    output_dir,
+    file_name
+  FROM jobs
+  ORDER BY created_at DESC
+  LIMIT 10
+)
+SELECT
+  j.id AS job_id,
+  j.status AS job_status,
+  j.error_message AS job_error_message,
+  j.created_at AS job_created_at,
+  j.updated_at AS job_updated_at,
+  j.profile_id AS job_profile_id,
+  j.source_path AS job_source_path,
+  j.output_dir AS job_output_dir,
+  j.file_name AS job_file_name,
+  jt.id AS task_id,
+  jt.status AS task_status,
+  jt.created_at AS task_created_at,
+  jt.updated_at AS task_updated_at,
+  jt.error_message AS task_error_message,
+  r.id AS rendition_id,
+  r.name AS rendition_name,
+  r.width AS rendition_width,
+  r.height AS rendition_height,
+  r.video_bitrate AS rendition_video_bitrate,
+  r.audio_bitrate AS rendition_audio_bitrate,
+  r.video_codec AS rendition_video_codec,
+  r.audio_codec AS rendition_audio_codec,
+  r.fps AS rendition_fps
+FROM latest_jobs AS j
+INNER JOIN job_tasks AS jt ON jt.job_id = j.id
+INNER JOIN renditions AS r ON r.id = jt.rendition_id
+ORDER BY j.created_at DESC, jt.id;

@@ -4,52 +4,52 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/crimsonn/media_pipeline/internal/config"
 	"github.com/crimsonn/media_pipeline/internal/db"
 	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/crimsonn/media_pipeline/internal/transcoder"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/health"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func main() {
-	run()
-}
-
-func run() {
-
-	srv := grpc.NewServer()
-	healthServ := health.NewServer()
-	healthpb.RegisterHealthServer(srv, healthServ)
-
 	logger := slog.Default()
 	config := config.LoadConfig()
+
 	database, err := db.OpenDatabase(context.Background(), config.DatabaseURL)
 	if err != nil {
 		logger.Error("open database", "err", err)
 		os.Exit(1)
 	}
+
 	q := queries.New(database)
+	numWorkers := config.TranscoderWorkers
+	worker := transcoder.NewWorkers(numWorkers, logger, q)
 
-	worker := transcoder.NewWorkers(10, logger, q)
-	logger.Info("transcoder workers started", "count", 10)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	workerCtx, cancelWorkers := context.WithCancel(context.Background())
-	defer cancelWorkers()
-	worker.Start(workerCtx)
+	worker.Start(ctx)
+	logger.Info("transcoder workers started", "count", numWorkers)
 
-	done := make(chan struct{})
+	<-ctx.Done()
+	logger.Info("shutdown signal received, initiating graceful shutdown...")
+
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelShutdown()
+
+	shutdownDone := make(chan struct{})
 	go func() {
 		worker.Stop()
-		close(done)
+		close(shutdownDone)
 	}()
+
 	select {
-	case <-done:
-		slog.Info("all workers stopped")
-	case <-time.After(15 * time.Second):
-		slog.Warn("wrokers did not finish in time, exiting anyway")
+	case <-shutdownDone:
+		logger.Info("all workers stopped gracefully")
+	case <-shutdownCtx.Done():
+		logger.Warn("workers did not finish in time, forcing exit")
 	}
 }

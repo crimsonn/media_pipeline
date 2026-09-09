@@ -53,3 +53,6 @@ SET
   retry_count = retry_count + 1,
   updated_at = now()
 WHERE id = $1;
+
+-- name: GetLatestJobs :many
+SELECT * FROM jobs ORDER BY created_at DESC LIMIT 10;

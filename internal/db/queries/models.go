@@ -33,6 +33,14 @@ type JobTask struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type PendingFile struct {
+	ID        int64
+	FileName  string
+	Status    string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ProfileRendition struct {
 	ProfileID   int64
 	RenditionID int64

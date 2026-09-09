@@ -1,8 +1,20 @@
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Film, LayoutDashboard, SlidersHorizontal } from 'lucide-react'
+import {
+  Film,
+  Inbox,
+  LayoutDashboard,
+  Moon,
+  PlayCircle,
+  SlidersHorizontal,
+  Sun,
+} from 'lucide-react'
+import { useTheme } from '#/lib/theme'
 
 const navItems = [
   { to: '/', label: 'Home', icon: LayoutDashboard, exact: true },
+  { to: '/pending', label: 'Pending files', icon: Inbox, exact: false },
+  { to: '/playback', label: 'Playback', icon: PlayCircle, exact: false },
   { to: '/renditions', label: 'Renditions', icon: Film, exact: false },
   { to: '/profiles', label: 'Profiles', icon: SlidersHorizontal, exact: false },
 ] as const
@@ -37,18 +49,33 @@ export function AppSidebar() {
       </nav>
 
       <div className="border-t border-sidebar-border p-3">
-        <div className="flex items-center gap-3 px-3 py-1.5">
-          <div className="flex size-7 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
-            AD
-          </div>
-          <div className="flex flex-col leading-tight">
-            <span className="text-xs font-medium text-sidebar-foreground">
-              Admin
-            </span>
-            <span className="text-[11px] text-muted-foreground">Signed in</span>
-          </div>
-        </div>
+        <ThemeToggle />
       </div>
     </aside>
+  )
+}
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme()
+  // Avoid a hydration mismatch: render the same content on the server and on the
+  // first client paint, then swap once we know the resolved theme.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const isDark = mounted && theme === 'dark'
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      {isDark ? (
+        <Sun className="size-4 shrink-0" />
+      ) : (
+        <Moon className="size-4 shrink-0" />
+      )}
+      {isDark ? 'Light mode' : 'Dark mode'}
+    </button>
   )
 }

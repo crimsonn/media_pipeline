@@ -3,7 +3,6 @@ package watcher
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,8 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/crimsonn/media_pipeline/pkg/pb"
+	"github.com/crimsonn/media_pipeline/internal/db/queries"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type TaskStatus string
@@ -33,9 +33,9 @@ type Orchestrator struct {
 	logger          *slog.Logger
 	watchDirectory  string
 	outputDirectory string
-	transcoder      pb.TranscoderServiceClient
 	filesChecked    map[string]bool
 	mu              sync.Mutex
+	db              *queries.Queries
 }
 
 type Task struct {
@@ -54,7 +54,7 @@ func NewOrchestrator(
 	pollingInterval time.Duration,
 	watchDirectory string,
 	outputDirectory string,
-	transcoder pb.TranscoderServiceClient,
+	db *queries.Queries,
 ) *Orchestrator {
 	logger := slog.Default()
 	logger.Info("starting workers", "count", numWorkers)
@@ -67,8 +67,8 @@ func NewOrchestrator(
 		numWorkers:      numWorkers,
 		watchDirectory:  watchDirectory,
 		outputDirectory: outputDirectory,
-		transcoder:      transcoder,
 		filesChecked:    make(map[string]bool),
+		db:              db,
 	}
 }
 
@@ -156,62 +156,28 @@ func (o *Orchestrator) processTask(ctx context.Context, workerid int, task *Task
 
 			if task.tries >= 2 {
 				o.logger.Info("task exceeded max tries, submitting for transcoding", "file_id", task.id.String())
-				stream, err := o.transcoder.TranscodeVideo(ctx, &pb.TranscodeVideoRequest{
-					FileName:        task.fileName,
-					FileId:          task.id.String(),
-					SourceFilePath:  filePath,
-					OutputDirectory: o.outputDirectory,
-					Resolutions: []*pb.TranscodeResolution{
-						{
-							Name:     "1080p",
-							Width:    1920,
-							Height:   1080,
-							VideoBps: 5_000_000,
-							AudioBps: 128_000,
-						},
-						{
-							Name:     "720p",
-							Width:    1280,
-							Height:   720,
-							VideoBps: 2_000_000,
-							AudioBps: 128_000,
-						},
-					},
-				})
-				if err != nil {
-					o.logger.Error("transcoding failed or was cancelled", "error", err)
-					task.status = Failed
+				existing, err := o.db.GetPendingFile(ctx, task.fileName)
+				if err == nil {
+					o.logger.Info("file already exists, skipping", "file_id", existing.ID)
 					return
 				}
 
-				task.status = Processing
-				for {
-					progress, err := stream.Recv()
-					if err == io.EOF {
-						break
-					}
-
-					if err != nil {
-						o.logger.Error("transcode stream failed", "error", err)
-						task.status = Failed
-						task.error = err
-						return
-					}
-
-					switch progress.State {
-					case pb.TranscodeState_TRANSCODE_STATE_IN_PROGRESS:
-						o.logger.Info("transcoding in progress", "taskId", task.id, "percentComplete", progress.PercentComplete)
-					case pb.TranscodeState_TRANSCODE_STATE_COMPLETED:
-						o.logger.Info("transcoding completed", "taskId", task.id)
-						task.status = Completed
-					case pb.TranscodeState_TRANSCODE_STATE_FAILED:
-						o.logger.Error("transcoding failed", "taskId", task.id, "error", progress.ErrorMessage)
-						task.status = Failed
-						task.error = errors.New(progress.ErrorMessage)
-						return
-					}
+				if !errors.Is(err, pgx.ErrNoRows) {
+					o.logger.Error("failed to get pending file", "error", err)
+					task.status = Failed
+					task.error = err
+					return
 				}
+				results, err := o.db.CreatePendingFile(ctx, task.fileName)
+				if err != nil {
+					o.logger.Error("failed to create pending file", "error", err)
+					task.status = Failed
+					task.error = err
+					return
+				}
+				o.logger.Info("pending file created", "file_id", results.ID)
 
+				task.status = Processing
 				return
 			}
 		}
@@ -223,7 +189,7 @@ func (o *Orchestrator) StartPolling(ctx context.Context) {
 	for {
 		select {
 		case <-tick.C:
-			o.walkDirectory()
+			o.walkDirectory(ctx)
 		case <-ctx.Done():
 			o.logger.Info("polling stopped")
 			tick.Stop()
@@ -232,7 +198,7 @@ func (o *Orchestrator) StartPolling(ctx context.Context) {
 	}
 }
 
-func (o *Orchestrator) walkDirectory() {
+func (o *Orchestrator) walkDirectory(ctx context.Context) {
 	files, err := os.ReadDir(o.watchDirectory)
 	if err != nil {
 		o.logger.Error("failed to read directory", "error", err)
@@ -244,8 +210,21 @@ func (o *Orchestrator) walkDirectory() {
 		if !alreadyChecked {
 			o.filesChecked[file.Name()] = true
 		}
-		o.mu.Unlock()
 		if alreadyChecked {
+			continue
+		}
+
+		existing, err := o.db.GetPendingFile(ctx, file.Name())
+		if err == nil {
+			delete(o.filesChecked, file.Name())
+			o.logger.Info("file already exists, skipping", "file_id", existing.ID)
+			o.mu.Unlock()
+			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			delete(o.filesChecked, file.Name())
+			o.logger.Error("failed to get pending file", "error", err)
+			o.mu.Unlock()
 			continue
 		}
 		submitted := o.Submit(&Task{
@@ -254,6 +233,7 @@ func (o *Orchestrator) walkDirectory() {
 			fileName:      file.Name(),
 			lastCheckedAt: time.Now(),
 		})
+		o.mu.Unlock()
 
 		if !submitted {
 			o.mu.Lock()

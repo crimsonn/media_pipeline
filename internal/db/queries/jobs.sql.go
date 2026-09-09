@@ -152,6 +152,43 @@ func (q *Queries) GetJob(ctx context.Context, id int64) (Job, error) {
 	return i, err
 }
 
+const getLatestJobs = `-- name: GetLatestJobs :many
+SELECT id, source_path, output_dir, file_name, file_id, profile_id, status, progress_percent, error_message, retry_count, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT 10
+`
+
+func (q *Queries) GetLatestJobs(ctx context.Context) ([]Job, error) {
+	rows, err := q.db.Query(ctx, getLatestJobs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Job
+	for rows.Next() {
+		var i Job
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourcePath,
+			&i.OutputDir,
+			&i.FileName,
+			&i.FileID,
+			&i.ProfileID,
+			&i.Status,
+			&i.ProgressPercent,
+			&i.ErrorMessage,
+			&i.RetryCount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateJobProgress = `-- name: UpdateJobProgress :exec
 UPDATE jobs
 SET

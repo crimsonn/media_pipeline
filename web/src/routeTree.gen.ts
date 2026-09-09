@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DashboardRouteImport } from './routes/_dashboard'
 import { Route as DashboardIndexRouteImport } from './routes/_dashboard/index'
+import { Route as DashboardPendingRouteImport } from './routes/_dashboard/pending'
+import { Route as DashboardPlaybackRouteImport } from './routes/_dashboard/playback'
 import { Route as DashboardProfilesRouteImport } from './routes/_dashboard/profiles'
 import { Route as DashboardRenditionsRouteImport } from './routes/_dashboard/renditions'
 
@@ -21,6 +23,16 @@ const DashboardRoute = DashboardRouteImport.update({
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardPendingRoute = DashboardPendingRouteImport.update({
+  id: '/pending',
+  path: '/pending',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardPlaybackRoute = DashboardPlaybackRouteImport.update({
+  id: '/playback',
+  path: '/playback',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardProfilesRoute = DashboardProfilesRouteImport.update({
@@ -36,10 +48,14 @@ const DashboardRenditionsRoute = DashboardRenditionsRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof DashboardIndexRoute
+  '/pending': typeof DashboardPendingRoute
+  '/playback': typeof DashboardPlaybackRoute
   '/profiles': typeof DashboardProfilesRoute
   '/renditions': typeof DashboardRenditionsRoute
 }
 export interface FileRoutesByTo {
+  '/pending': typeof DashboardPendingRoute
+  '/playback': typeof DashboardPlaybackRoute
   '/profiles': typeof DashboardProfilesRoute
   '/renditions': typeof DashboardRenditionsRoute
   '/': typeof DashboardIndexRoute
@@ -47,18 +63,22 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_dashboard': typeof DashboardRouteWithChildren
+  '/_dashboard/pending': typeof DashboardPendingRoute
+  '/_dashboard/playback': typeof DashboardPlaybackRoute
   '/_dashboard/profiles': typeof DashboardProfilesRoute
   '/_dashboard/renditions': typeof DashboardRenditionsRoute
   '/_dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/profiles' | '/renditions'
+  fullPaths: '/' | '/pending' | '/playback' | '/profiles' | '/renditions'
   fileRoutesByTo: FileRoutesByTo
-  to: '/profiles' | '/renditions' | '/'
+  to: '/pending' | '/playback' | '/profiles' | '/renditions' | '/'
   id:
     | '__root__'
     | '/_dashboard'
+    | '/_dashboard/pending'
+    | '/_dashboard/playback'
     | '/_dashboard/profiles'
     | '/_dashboard/renditions'
     | '/_dashboard/'
@@ -84,6 +104,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/_dashboard/pending': {
+      id: '/_dashboard/pending'
+      path: '/pending'
+      fullPath: '/pending'
+      preLoaderRoute: typeof DashboardPendingRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/_dashboard/playback': {
+      id: '/_dashboard/playback'
+      path: '/playback'
+      fullPath: '/playback'
+      preLoaderRoute: typeof DashboardPlaybackRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/_dashboard/profiles': {
       id: '/_dashboard/profiles'
       path: '/profiles'
@@ -102,12 +136,16 @@ declare module '@tanstack/react-router' {
 }
 
 interface DashboardRouteChildren {
+  DashboardPendingRoute: typeof DashboardPendingRoute
+  DashboardPlaybackRoute: typeof DashboardPlaybackRoute
   DashboardProfilesRoute: typeof DashboardProfilesRoute
   DashboardRenditionsRoute: typeof DashboardRenditionsRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardPendingRoute: DashboardPendingRoute,
+  DashboardPlaybackRoute: DashboardPlaybackRoute,
   DashboardProfilesRoute: DashboardProfilesRoute,
   DashboardRenditionsRoute: DashboardRenditionsRoute,
   DashboardIndexRoute: DashboardIndexRoute,

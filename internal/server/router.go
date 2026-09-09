@@ -3,21 +3,23 @@ package server
 import (
 	"log/slog"
 
+	"github.com/crimsonn/media_pipeline/internal/api/jobs"
+	"github.com/crimsonn/media_pipeline/internal/api/pending"
+	"github.com/crimsonn/media_pipeline/internal/api/playback"
 	"github.com/crimsonn/media_pipeline/internal/api/transcoder"
 	"github.com/crimsonn/media_pipeline/internal/config"
 	"github.com/crimsonn/media_pipeline/internal/middleware"
-	"github.com/crimsonn/media_pipeline/pkg/pb"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func SetupRouter(
 	logger *slog.Logger,
 	config *config.Config,
-	transcoderService pb.TranscoderServiceClient,
-	healthService healthpb.HealthClient,
 	transcoderHandler *transcoder.Handler,
+	pendingHandler *pending.Handler,
+	jobsHandler *jobs.Handler,
+	playbackHandler *playback.Handler,
 ) *gin.Engine {
 	router := gin.New()
 	if config.Environment == "development" {
@@ -41,6 +43,20 @@ func SetupRouter(
 		transcoderGroup.POST("/profiles", transcoderHandler.CreateProfile)
 		transcoderGroup.GET("/profiles/:id", transcoderHandler.GetProfile)
 		transcoderGroup.GET("/profiles", transcoderHandler.GetProfiles)
+	}
+	{
+		pendingGroup := v1.Group("/pending")
+		pendingGroup.GET("/files", pendingHandler.GetPendingFiles)
+		pendingGroup.POST("/files", pendingHandler.EnqueuePendingFile)
+	}
+	{
+		jobsGroup := v1.Group("/jobs")
+		jobsGroup.GET("/latest", jobsHandler.GetLatestJobs)
+	}
+	{
+		playbackGroup := v1.Group("/playback")
+		playbackGroup.GET("/outputs", playbackHandler.ListOutputs)
+		playbackGroup.GET("/hls/*filepath", playbackHandler.ServeFile)
 	}
 
 	return router
